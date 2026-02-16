@@ -1,0 +1,19 @@
+# Generated data and results
+data/
+results/
+report_assets/
+
+# Reference repo (large, cloned separately)
+reference/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment
+.env
+*.egg-info/
+
+# OS
+.DS_Store
