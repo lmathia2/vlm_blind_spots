@@ -23,8 +23,8 @@ TASK_CONFIG = {
         "resolution": 512,
     },
     "sweep_axes": {
-        "n_boxes": [4, 5, 6, 7],
-        "n_arrows": [3, 4, 5, 6, 7],
+        "n_boxes": [4, 5, 6, 7, 8, 10],
+        "n_arrows": [4, 6, 8, 10, 14],
     },
 }
 

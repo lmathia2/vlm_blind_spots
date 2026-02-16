@@ -11,42 +11,101 @@ from config import DATA_DIR, RESULTS_DIR, MODEL
 
 
 def cmd_generate(args):
-    """Generate images + manifest JSONL for a task."""
+    """Generate images + manifest JSONL for a task (or all tasks)."""
     from tasks import TASK_REGISTRY
 
-    if args.task not in TASK_REGISTRY:
-        print(f"Unknown task: {args.task}. Available: {list(TASK_REGISTRY.keys())}")
+    if args.task == "all":
+        tasks = sorted(TASK_REGISTRY.keys())
+    elif args.task not in TASK_REGISTRY:
+        print(f"Unknown task: {args.task}. Available: all, {list(TASK_REGISTRY.keys())}")
         sys.exit(1)
+    else:
+        tasks = [args.task]
 
-    config = TASK_REGISTRY[args.task]
+    all_manifests = []
+    for task_name in tasks:
+        config = TASK_REGISTRY[task_name]
+        manifest_path = _generate_task(config, args)
+        all_manifests.append(manifest_path)
+
+    # When generating all tasks, combine manifests automatically
+    if args.task == "all":
+        combined_dir = DATA_DIR / "combined"
+        combined_dir.mkdir(parents=True, exist_ok=True)
+        combined_path = combined_dir / "manifest.jsonl"
+        total = 0
+        with open(combined_path, "w") as out:
+            for mp in all_manifests:
+                with open(mp) as f:
+                    for line in f:
+                        out.write(line)
+                        total += 1
+        print(f"\nCombined manifest: {total} samples → {combined_path}")
+
+
+def _generate_task(config: dict, args) -> Path:
+    """Generate images + manifest for a single task. Returns manifest path."""
     render_fn = config["_render"]
-    task_dir = DATA_DIR / args.task
+    task_dir = DATA_DIR / config["task_name"]
     task_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = task_dir / "manifest.jsonl"
 
-    # Prompt variant selection
     prompt_variant = getattr(args, "prompt_variant", 1)
     prompt_key = "prompt_template" if prompt_variant == 1 else "prompt_template_v2"
 
     if args.sweep:
         param_combos = _sweep_combos(config)
-        n_per = args.n_per_config or 1
+        n_combos = len(param_combos)
+        if args.n_per_config is not None:
+            n_per = args.n_per_config
+        else:
+            # Auto-scale: at least min_samples_per_task total samples
+            min_samples = args.min_samples
+            max_per = args.max_per_config
+            import math
+            n_per = max(1, math.ceil(min_samples / n_combos))
+            n_per = min(n_per, max_per)
+
+        # Cap total samples per task; randomly sample combos if needed
+        max_total = args.max_total
+        total_planned = len(param_combos) * n_per
+        if total_planned > max_total:
+            import random as _rng
+            _rng.seed(42)
+            keep = max(1, max_total // n_per)
+            _rng.shuffle(param_combos)
+            param_combos = param_combos[:keep]
     else:
         param_combos = [config["default_params"]]
         n_per = args.n or 10
 
+    import inspect
+    sig = inspect.signature(render_fn)
+    accepts_seed = "seed" in sig.parameters
+    accepts_prompt_variant = "prompt_variant" in sig.parameters
+
     count = 0
+    seen = set()
     with open(manifest_path, "w") as f:
         for params in param_combos:
             for i in range(n_per):
                 sample_id = uuid.uuid4().hex[:8]
-                # Pass prompt_variant to render if it accepts it
-                import inspect
-                sig = inspect.signature(render_fn)
-                if "prompt_variant" in sig.parameters:
-                    img, ground_truth, metadata = render_fn(**params, prompt_variant=prompt_variant)
-                else:
-                    img, ground_truth, metadata = render_fn(**params)
+                kwargs = dict(params)
+                if accepts_seed:
+                    kwargs["seed"] = hash((str(params), i)) & 0x7FFFFFFF
+                if accepts_prompt_variant:
+                    kwargs["prompt_variant"] = prompt_variant
+
+                img, ground_truth, metadata = render_fn(**kwargs)
+
+                # Dedup only for deterministic tasks (no seed param)
+                # Stochastic tasks produce unique outputs per call
+                if not accepts_seed and n_per > 1:
+                    dedup_key = (str(sorted(params.items())), ground_truth)
+                    if dedup_key in seen:
+                        continue
+                    seen.add(dedup_key)
+
                 img_filename = f"{sample_id}.png"
                 img_path = task_dir / img_filename
                 img.save(img_path)
@@ -57,8 +116,8 @@ def cmd_generate(args):
                     "image_path": str(img_path),
                     "prompt": metadata.get("prompt", config[prompt_key]),
                     "ground_truth": ground_truth,
-                    "parser": config["parser"],
-                    "scorer": config["scorer"],
+                    "parser": metadata.get("parser", config["parser"]),
+                    "scorer": metadata.get("scorer", config["scorer"]),
                     "params": metadata,
                 }
                 if prompt_variant != 1:
@@ -147,7 +206,14 @@ def main():
     gen.add_argument("--task", required=True, help="Task name")
     gen.add_argument("--n", type=int, default=10, help="Number of samples (default mode)")
     gen.add_argument("--sweep", action="store_true", help="Sweep all parameter combinations")
-    gen.add_argument("--n-per-config", type=int, default=1, help="Samples per sweep config")
+    gen.add_argument("--n-per-config", type=int, default=None,
+                     help="Samples per sweep config (overrides --min-samples)")
+    gen.add_argument("--min-samples", type=int, default=50,
+                     help="Minimum samples per task in sweep mode (default: 50)")
+    gen.add_argument("--max-per-config", type=int, default=100,
+                     help="Maximum samples per sweep config (default: 100)")
+    gen.add_argument("--max-total", type=int, default=100,
+                     help="Maximum total samples per task; randomly samples configs if exceeded (default: 100)")
     gen.add_argument("--prompt-variant", type=int, default=1, choices=[1, 2],
                      help="Prompt variant (1=original, 2=rephrased)")
     gen.set_defaults(func=cmd_generate)

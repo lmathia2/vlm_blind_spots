@@ -22,10 +22,12 @@ TASK_CONFIG = {
     ),
     "parser": "integer",
     "scorer": "integer_distance",
-    "default_params": {"resolution": 512, "linewidth": 2, "grid_size": 6},
+    "default_params": {"resolution": 512, "linewidth": 2, "grid_size": 6, "n_points": 3},
     "sweep_axes": {
-        "linewidth": [1, 1.5, 2, 3, 4, 5, 8],
-        "resolution": [384, 512, 768, 1024, 1152],
+        "linewidth": [1, 2, 3, 5],
+        "resolution": [384, 512, 768, 1024],
+        "target_intersections": [0, 1, 2, 3, 4, 5, 6, 7, 8],
+        "n_points": [3, 4, 5],
     },
 }
 
@@ -80,10 +82,10 @@ def _count_intersections(path_a: list[tuple[float, float]],
     return count
 
 
-def _generate_path(rng: random.Random, grid_size: int) -> list[tuple[float, float]]:
-    """Generate a random piecewise-linear path with 3 control points on a grid."""
+def _generate_path(rng: random.Random, grid_size: int, n_points: int = 3) -> list[tuple[float, float]]:
+    """Generate a random piecewise-linear path with n_points control points on a grid."""
     points = []
-    for _ in range(3):
+    for _ in range(n_points):
         x = rng.randint(0, grid_size)
         y = rng.randint(0, grid_size)
         points.append((float(x), float(y)))
@@ -102,6 +104,7 @@ def _paths_are_valid(path_a: list[tuple[float, float]],
 
 def render(resolution: int = 512, linewidth: int = 2, grid_size: int = 6,
            target_intersections: int | None = None,
+           n_points: int = 3,
            seed: int | None = None) -> tuple[Image.Image, str, dict]:
     """Render two piecewise-linear paths and count their intersections.
 
@@ -131,8 +134,8 @@ def render(resolution: int = 512, linewidth: int = 2, grid_size: int = 6,
     while attempt < max_attempts:
         # Use a deterministic seed per attempt so results are reproducible
         attempt_rng = random.Random(rng.randint(0, 2**31))
-        path_a = _generate_path(attempt_rng, grid_size)
-        path_b = _generate_path(attempt_rng, grid_size)
+        path_a = _generate_path(attempt_rng, grid_size, n_points)
+        path_b = _generate_path(attempt_rng, grid_size, n_points)
 
         if not _paths_are_valid(path_a, path_b):
             attempt += 1
@@ -173,6 +176,7 @@ def render(resolution: int = 512, linewidth: int = 2, grid_size: int = 6,
         "resolution": resolution,
         "linewidth": linewidth,
         "grid_size": grid_size,
+        "n_points": n_points,
         "path_blue": path_a,
         "path_red": path_b,
         "intersections": n_intersections,

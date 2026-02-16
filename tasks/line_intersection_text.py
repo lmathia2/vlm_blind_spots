@@ -21,9 +21,11 @@ TASK_CONFIG = {
     "default_params": {
         "grid_size": 6,
         "target_intersections": None,
+        "n_points": 3,
     },
     "sweep_axes": {
-        "target_intersections": [0, 1, 2],
+        "target_intersections": [0, 1, 2, 3, 4, 5, 6, 7, 8],
+        "n_points": [3, 4, 5],
     },
 }
 
@@ -32,6 +34,7 @@ _call_counter = 0
 
 def render(grid_size: int = 6,
            target_intersections: int | None = None,
+           n_points: int = 3,
            prompt_variant: int = 1) -> tuple[Image.Image, str, dict]:
     """Return a tiny placeholder image with line coords as text in the prompt."""
     global _call_counter
@@ -45,8 +48,8 @@ def render(grid_size: int = 6,
     n_intersections = -1
     for _ in range(5000):
         attempt_rng = Random(rng.randint(0, 2**31))
-        blue = _generate_path(attempt_rng, grid_size)
-        red = _generate_path(attempt_rng, grid_size)
+        blue = _generate_path(attempt_rng, grid_size, n_points)
+        red = _generate_path(attempt_rng, grid_size, n_points)
         if not _paths_are_valid(blue, red):
             continue
         n_intersections = _count_intersections(blue, red)
@@ -79,6 +82,7 @@ def render(grid_size: int = 6,
     ground_truth = str(n_intersections)
     metadata = {
         "grid_size": grid_size,
+        "n_points": n_points,
         "path_blue": blue,
         "path_red": red,
         "intersections": n_intersections,
