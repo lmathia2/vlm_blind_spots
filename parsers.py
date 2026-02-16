@@ -49,11 +49,21 @@ def parse_yes_no(response: str) -> Optional[str]:
 @register_parser("letter")
 def parse_letter(response: str) -> Optional[str]:
     """Extract a single uppercase letter from response."""
-    # Try {X} format first
+    # Try {X} format first (most reliable)
     m = re.search(r"\{([A-Za-z])\}", response)
     if m:
         return m.group(1).upper()
-    # Try standalone letter
+    # Try "answer is X" / "is X" / "box X" / "reach X" patterns (last match wins)
+    matches = re.findall(r"(?:answer\s+is|is|box|reach)\s+([A-Za-z])\b", response, re.IGNORECASE)
+    if matches:
+        return matches[-1].upper()
+    # Search from end of response for a standalone uppercase letter (skip I/A)
+    # This avoids grabbing "I" from "I think..." or "A" from "A box..."
+    words = response.split()
+    for word in reversed(words):
+        if re.fullmatch(r"[A-Za-z]\.?", word) and word.rstrip(".").upper() not in ("I", "A"):
+            return word.rstrip(".").upper()
+    # Last resort: any standalone letter (including I/A)
     m = re.search(r"\b([A-Za-z])\b", response)
     if m:
         return m.group(1).upper()
@@ -78,10 +88,24 @@ def parse_row_col(response: str) -> Optional[str]:
 @register_parser("csv_letters")
 def parse_csv_letters(response: str) -> Optional[str]:
     """Extract sorted comma-separated uppercase letters."""
-    # Find all single letters that appear to be option labels
-    letters = re.findall(r"\b([A-Za-z])\b", response)
-    if not letters:
-        return None
-    # Deduplicate and sort
-    unique = sorted(set(l.upper() for l in letters))
-    return ",".join(unique)
+    # Try {A, C, E} or {A,C,E} format first
+    m = re.search(r"\{([A-Za-z](?:\s*,\s*[A-Za-z])*)\}", response)
+    if m:
+        letters = re.findall(r"[A-Za-z]", m.group(1))
+        return ",".join(sorted(set(l.upper() for l in letters)))
+    # Try comma-separated letter list pattern: A, C, E or A,C,E
+    m = re.search(r"\b([A-Za-z]\s*(?:,\s*[A-Za-z]\s*)+)\b", response)
+    if m:
+        letters = re.findall(r"[A-Za-z]", m.group(1))
+        if letters:
+            return ",".join(sorted(set(l.upper() for l in letters)))
+    # Last resort: standalone uppercase option-like letters (skip common words)
+    skip = {"I", "A", "IN", "OR", "TO", "IS", "IT", "AS", "AT", "IF", "OF"}
+    letters = []
+    for word in response.split():
+        clean = word.strip(".,;:!?()[]")
+        if re.fullmatch(r"[A-Za-z]", clean) and clean.upper() not in skip:
+            letters.append(clean.upper())
+    if letters:
+        return ",".join(sorted(set(letters)))
+    return None

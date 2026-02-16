@@ -7,6 +7,7 @@ from PIL import Image, ImageDraw, ImageFont
 TASK_CONFIG = {
     "task_name": "table_cell_read",
     "prompt_template": None,  # filled dynamically per sample via render()
+    "prompt_template_v2": None,  # dynamic v2 prompt set in render()
     "parser": "integer",
     "scorer": "exact_match",
     "default_params": {
@@ -49,6 +50,7 @@ def render(
     font_size: int = 16,
     line_width: int = 2,
     resolution: int = 512,
+    prompt_variant: int = 1,
 ) -> tuple[Image.Image, str, dict]:
     """Render a table grid with 2-digit numbers and query one cell."""
     global _call_counter
@@ -94,8 +96,14 @@ def render(
 
     prompt = (
         f"What number is in row {target_row}, column {target_col} "
-        f"of this table? Answer with just the number."
+        f"of this table? Put your answer in curly brackets, e.g., {{42}}."
     )
+
+    if prompt_variant == 2:
+        prompt = (
+            f"Read the value at row {target_row}, column {target_col} "
+            f"in the table. Put your answer in curly brackets, e.g., {{42}}."
+        )
 
     metadata = {
         "rows": rows,

@@ -15,6 +15,7 @@ from tasks.line_intersection import (
 TASK_CONFIG = {
     "task_name": "line_intersection_text",
     "prompt_template": "",  # filled dynamically per sample
+    "prompt_template_v2": "",  # dynamic v2 prompt set in render()
     "parser": "integer",
     "scorer": "integer_distance",
     "default_params": {
@@ -30,7 +31,8 @@ _call_counter = 0
 
 
 def render(grid_size: int = 6,
-           target_intersections: int | None = None) -> tuple[Image.Image, str, dict]:
+           target_intersections: int | None = None,
+           prompt_variant: int = 1) -> tuple[Image.Image, str, dict]:
     """Return a tiny placeholder image with line coords as text in the prompt."""
     global _call_counter
     _call_counter += 1
@@ -61,6 +63,15 @@ def render(grid_size: int = 6,
         f"How many times do the blue and red lines intersect? "
         f"Put your answer in curly brackets, e.g., {{2}}."
     )
+
+    if prompt_variant == 2:
+        prompt = (
+            f"Two paths are drawn on a coordinate grid from (0,0) to ({grid_size},{grid_size}).\n"
+            f"Blue path points: {blue_str}\n"
+            f"Red path points: {red_str}\n"
+            f"Count the number of intersection points. "
+            f"Put your answer in curly brackets, e.g., {{2}}."
+        )
 
     # Tiny placeholder image (API requires an image)
     img = Image.new("RGB", (64, 64), "white")

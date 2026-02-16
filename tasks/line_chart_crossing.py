@@ -16,6 +16,10 @@ TASK_CONFIG = {
         "How many times do the blue and red lines cross each other? "
         "Answer with a number in curly brackets, e.g., {2}."
     ),
+    "prompt_template_v2": (
+        "In this chart, count the number of crossing points between "
+        "the blue and red lines. Answer in curly brackets, e.g., {2}."
+    ),
     "parser": "integer",
     "scorer": "integer_distance",
     "default_params": {"resolution": 768, "n_points": 100, "target_crossings": None},

@@ -13,6 +13,7 @@ from PIL import Image
 TASK_CONFIG = {
     "task_name": "arrow_following",
     "prompt_template": None,  # filled dynamically per sample
+    "prompt_template_v2": None,  # dynamic v2 prompt set in render()
     "parser": "letter",
     "scorer": "exact_match",
     "default_params": {
@@ -111,6 +112,7 @@ def render(
     arrow_width: float = 2,
     resolution: int = 512,
     seed: int | None = None,
+    prompt_variant: int = 1,
 ) -> tuple[Image.Image, str, dict]:
     """Render labeled boxes connected by arrows forming a DAG.
 
@@ -159,8 +161,16 @@ def render(
 
     prompt = (
         f"Starting at box {start_label}, follow the arrows. "
-        f"What is the last box you reach?"
+        f"What is the last box you reach? "
+        f"Answer with just the letter in curly brackets, e.g., {{C}}."
     )
+
+    if prompt_variant == 2:
+        prompt = (
+            f"Follow the directed arrows starting from box {start_label}. "
+            f"Which box do you end up at? "
+            f"Answer with just the letter in curly brackets, e.g., {{C}}."
+        )
 
     # --- Render with matplotlib ---
     positions = _grid_positions(n_boxes)

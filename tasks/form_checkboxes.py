@@ -9,7 +9,12 @@ TASK_CONFIG = {
     "task_name": "form_checkboxes",
     "prompt_template": (
         "Which options are checked? List only the letters of the "
-        "checked options, separated by commas."
+        "checked options, separated by commas, in curly brackets. "
+        "For example: {A, C, E}."
+    ),
+    "prompt_template_v2": (
+        "List the letters of all checked checkboxes, separated by commas, "
+        "in curly brackets. For example: {A, C}."
     ),
     "parser": "csv_letters",
     "scorer": "set_match",

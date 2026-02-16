@@ -7,6 +7,7 @@ from pathlib import Path
 MODEL = os.environ.get("VLM_MODEL", "claude-haiku-4-5-20251001")
 TEMPERATURE = 0.0
 MAX_TOKENS = 512
+THINKING_BUDGET = 4096  # token budget for extended thinking
 
 # Parallelism
 MAX_WORKERS = int(os.environ.get("VLM_MAX_WORKERS", "10"))

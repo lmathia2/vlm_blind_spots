@@ -16,6 +16,10 @@ TASK_CONFIG = {
         "Count total number of squares in the image. "
         "Answer with only the number in numerical format in curly brackets e.g. {3}."
     ),
+    "prompt_template_v2": (
+        "How many squares are shown in total, including squares inside other squares? "
+        "Answer in curly brackets, e.g., {3}."
+    ),
     "parser": "integer",
     "scorer": "integer_distance",
     "default_params": {
@@ -25,8 +29,9 @@ TASK_CONFIG = {
         "reduction_factor": 0.6,
     },
     "sweep_axes": {
-        "depth": [2, 3, 4, 5],
-        "line_thickness": [1, 2, 3, 5],
+        "depth": [2, 3, 4, 5, 6, 7, 8],
+        "reduction_factor": [0.4, 0.5, 0.6, 0.7, 0.8],
+        "line_thickness": [1, 2, 3],
     },
 }
 

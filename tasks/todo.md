@@ -75,25 +75,74 @@
   - line_chart_crossing: overcount=15%, undercount=5%, exact=80%
 - [x] Generate 34 analysis plots in report_assets/
 
+## Phase 8: Rigor Improvements
+- [x] Fix `letter` parser — search from end, skip "I"/"A", match "answer is X" patterns
+- [x] Fix `csv_letters` parser — try comma-separated list and `{A,C,E}` before broad regex
+- [x] Fix prompt format constraints — add curly bracket format hints to table_cell_read, arrow_following, form_checkboxes
+- [x] Add Wilson binomial confidence intervals to `analysis.py` (summary table + bar plot error bars)
+- [x] Add `--prompt-variant` CLI flag and `prompt_template_v2` to all 9 task configs
+- [x] Audit difficulty gap: nested_squares sweep now includes depth 2-8, reduction_factor 0.4-0.8; touching_circles adds finer boundary distances and smaller diameters
+- [x] Create `verify_determinism.py` script
+- [x] Re-generate all 9 tasks with N≥50 per task (1,226 total samples)
+- [x] Re-evaluate all 1,226 samples (0% parse failures!)
+- [ ] Run determinism verification (requires API calls)
+
+## Phase 9: Reasoning Mode (Extended Thinking)
+- [x] Add `THINKING_BUDGET = 4096` to config.py
+- [x] Add reasoning support to VisionClient + evaluate_manifest in harness.py
+- [x] Add `--reasoning` flag to CLI evaluate subcommand
+- [x] Add comparison table and grouped bar chart to analysis.py
+- [x] Normalize missing `reasoning_mode` field for backward compatibility
+- [x] Run full reasoning evaluation on all 1,226 samples
+- [x] Generate comparison analysis and plots
+
 ---
 
-## Summary of All Results
+## Summary of All Results (Rigorous, Phase 8)
 
-| Task | Source | N | Accuracy | Key Finding |
-|------|--------|---|----------|-------------|
-| line_intersection | BlindTest | 60 | 61.7% | Overcounting bias (+0.58) |
-| line_intersection | Generated sweep | 105 | 46.7% | Worst at generated images |
-| line_intersection_text | Text-only control | 30 | 20.0% | Reasoning failure, not perceptual |
-| counting_grid_blindtest | BlindTest | 264 | 65.5% | |
-| nested_squares | BlindTest | 80 | 67.5% | Overcounting bias (+0.28) |
-| nested_squares | Generated sweep | 48 | 97.9% | Much better on clean images |
-| counting_circles | BlindTest | 100 | 73.0% | Undercounting bias (-0.25) |
-| touching_circle | BlindTest | 40 | 75.0% | |
-| touching_circles | Generated sweep | 33 | 90.9% | Better on clean images |
-| table_cell_read | Generated | 20 | 0% | Complete failure on cell lookup |
-| arrow_following | Generated | 20 | 20% | Cannot follow directed arrows |
-| line_chart_crossing | Generated | 20 | 80% | Reasonable |
-| form_checkboxes | Generated | 20 | 100% | Perfect |
+| Task | N | Accuracy | 95% CI | Key Finding |
+|------|---|----------|--------|-------------|
+| line_intersection_text | 60 | 20.0% | [11.8%, 31.8%] | Reasoning failure (mean_error=+15.45) |
+| arrow_following | 50 | 34.0% | [22.4%, 47.8%] | Real blind spot (was 20% with null prompts) |
+| nested_squares | 315 | 51.7% | [46.2%, 57.2%] | Overcounting (+1.48), now harder params |
+| line_intersection | 175 | 55.4% | [48.0%, 62.6%] | Overcounting (+0.14) |
+| touching_circles | 396 | 74.5% | [70.0%, 78.5%] | Boundary confusion at small gaps |
+| line_chart_crossing | 80 | 81.2% | [71.3%, 88.3%] | Overcounting (+0.80) |
+| counting_grid | 50 | 100.0% | [92.9%, 100.0%] | Perfect on default 5×6 |
+| form_checkboxes | 50 | 100.0% | [92.9%, 100.0%] | Perfect |
+| table_cell_read | 50 | 100.0% | [92.9%, 100.0%] | Was 0% due to null-prompt bug |
+| **TOTAL** | **1226** | **65.2%** | **[62.5%, 67.8%]** | |
+
+## Reasoning Mode Comparison (Phase 9)
+
+| Task | N | No-Reasoning | Reasoning | Delta |
+|------|---|-------------|-----------|-------|
+| arrow_following | 50 | 34.0% | 46.0% | +12.0% |
+| counting_grid | 50 | 100.0% | 90.0% | -10.0% |
+| form_checkboxes | 50 | 100.0% | 100.0% | +0.0% |
+| line_chart_crossing | 80 | 81.2% | 96.2% | +15.0% |
+| line_intersection | 175 | 55.4% | 53.7% | -1.7% |
+| line_intersection_text | 60 | 20.0% | 90.0% | +70.0% |
+| nested_squares | 315 | 51.7% | 55.9% | +4.1% |
+| table_cell_read | 50 | 100.0% | 100.0% | +0.0% |
+| touching_circles | 396 | 74.5% | 78.5% | +4.0% |
+| **TOTAL** | **1226** | **65.2%** | **71.8%** | **+6.6%** |
+
+### Key Findings — Reasoning Mode
+1. **Overall +6.6% improvement** (65.2% → 71.8%) with extended thinking
+2. **line_intersection_text: +70.0%** — biggest gain. Reasoning dramatically helps compute segment intersections from coordinates (20% → 90%)
+3. **line_chart_crossing: +15.0%** — reasoning helps count crossings more accurately
+4. **arrow_following: +12.0%** — reasoning improves arrow path tracing
+5. **counting_grid: -10.0%** — reasoning *hurts* on this already-easy task (100% → 90%), likely overthinking
+6. **line_intersection: -1.7%** — essentially unchanged, visual perception is the bottleneck
+7. Tasks already at 100% (form_checkboxes, table_cell_read) remain perfect
+
+### Key Corrections from Phase 8
+1. **table_cell_read: 0% → 100%** — entirely a measurement artifact (null prompts in manifest)
+2. **arrow_following: 20% → 34%** — partially artifact, but still a genuine blind spot
+3. **nested_squares: 97.9% → 51.7%** — adding harder depth (6-8) and reduction factors exposed true difficulty
+4. **touching_circles: 90.9% → 74.5%** — finer boundary distances revealed confusion
+5. **0% parse failures** across all tasks — parser fixes eliminated all parsing errors
 
 ## Files Created
 - `config.py`, `parsers.py`, `scorers.py`, `harness.py`, `cli.py`, `analysis.py`

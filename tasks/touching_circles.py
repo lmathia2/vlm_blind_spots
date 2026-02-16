@@ -11,6 +11,7 @@ from PIL import Image
 TASK_CONFIG = {
     "task_name": "touching_circles",
     "prompt_template": "Are the two circles touching each other? Answer Yes/No.",
+    "prompt_template_v2": "Do the two circles overlap or touch? Answer Yes or No.",
     "parser": "yes_no",
     "scorer": "exact_match",
     "default_params": {
@@ -20,8 +21,9 @@ TASK_CONFIG = {
         "diameter": 0.2,
     },
     "sweep_axes": {
-        "distance": [-0.25, -0.20, -0.15, -0.10, -0.05, 0.0,
-                      0.05, 0.10, 0.15, 0.20, 0.25],
+        "distance": [-0.25, -0.15, -0.05, -0.02, -0.01, 0.0,
+                      0.01, 0.02, 0.05, 0.15, 0.25],
+        "diameter": [0.08, 0.12, 0.15, 0.2],
         "resolution": [384, 768, 1152],
     },
 }

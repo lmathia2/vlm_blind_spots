@@ -15,6 +15,11 @@ TASK_CONFIG = {
         "Count the intersection points where the blue and red lines meet. "
         "Put your answer in curly brackets, e.g., {2}."
     ),
+    "prompt_template_v2": (
+        "Look at the red and blue paths in this image. "
+        "At how many points do they cross? "
+        "Answer in curly brackets, e.g., {2}."
+    ),
     "parser": "integer",
     "scorer": "integer_distance",
     "default_params": {"resolution": 512, "linewidth": 2, "grid_size": 6},

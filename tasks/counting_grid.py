@@ -8,6 +8,10 @@ TASK_CONFIG = {
         "Count the number of rows and columns in this grid. "
         "Reply in the format: rows=N columns=M"
     ),
+    "prompt_template_v2": (
+        "This image shows a grid. How many rows and columns does it have? "
+        "Reply as: rows=N columns=M"
+    ),
     "parser": "row_col",
     "scorer": "row_col",
     "default_params": {"rows": 5, "cols": 6, "resolution": 512, "line_width": 2},

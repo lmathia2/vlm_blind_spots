@@ -24,6 +24,10 @@ def cmd_generate(args):
     task_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = task_dir / "manifest.jsonl"
 
+    # Prompt variant selection
+    prompt_variant = getattr(args, "prompt_variant", 1)
+    prompt_key = "prompt_template" if prompt_variant == 1 else "prompt_template_v2"
+
     if args.sweep:
         param_combos = _sweep_combos(config)
         n_per = args.n_per_config or 1
@@ -36,7 +40,13 @@ def cmd_generate(args):
         for params in param_combos:
             for i in range(n_per):
                 sample_id = uuid.uuid4().hex[:8]
-                img, ground_truth, metadata = render_fn(**params)
+                # Pass prompt_variant to render if it accepts it
+                import inspect
+                sig = inspect.signature(render_fn)
+                if "prompt_variant" in sig.parameters:
+                    img, ground_truth, metadata = render_fn(**params, prompt_variant=prompt_variant)
+                else:
+                    img, ground_truth, metadata = render_fn(**params)
                 img_filename = f"{sample_id}.png"
                 img_path = task_dir / img_filename
                 img.save(img_path)
@@ -45,12 +55,14 @@ def cmd_generate(args):
                     "sample_id": sample_id,
                     "task_name": config["task_name"],
                     "image_path": str(img_path),
-                    "prompt": metadata.get("prompt", config["prompt_template"]),
+                    "prompt": metadata.get("prompt", config[prompt_key]),
                     "ground_truth": ground_truth,
                     "parser": config["parser"],
                     "scorer": config["scorer"],
                     "params": metadata,
                 }
+                if prompt_variant != 1:
+                    record["prompt_variant"] = prompt_variant
                 f.write(json.dumps(record) + "\n")
                 count += 1
 
@@ -89,8 +101,9 @@ def cmd_evaluate(args):
         results_path = RESULTS_DIR / manifest_path.stem / "results.jsonl"
 
     model = args.model or MODEL
+    reasoning = getattr(args, "reasoning", False)
     evaluate_manifest(manifest_path, results_path, model=model,
-                      max_workers=args.workers)
+                      max_workers=args.workers, reasoning=reasoning)
 
 
 def cmd_analyze(args):
@@ -135,6 +148,8 @@ def main():
     gen.add_argument("--n", type=int, default=10, help="Number of samples (default mode)")
     gen.add_argument("--sweep", action="store_true", help="Sweep all parameter combinations")
     gen.add_argument("--n-per-config", type=int, default=1, help="Samples per sweep config")
+    gen.add_argument("--prompt-variant", type=int, default=1, choices=[1, 2],
+                     help="Prompt variant (1=original, 2=rephrased)")
     gen.set_defaults(func=cmd_generate)
 
     # evaluate
@@ -143,6 +158,8 @@ def main():
     ev.add_argument("--model", default=None, help="Model override")
     ev.add_argument("--output", default=None, help="Output results path")
     ev.add_argument("--workers", type=int, default=None, help="Max parallel workers")
+    ev.add_argument("--reasoning", action="store_true",
+                     help="Enable extended thinking (reasoning mode)")
     ev.set_defaults(func=cmd_evaluate)
 
     # analyze
