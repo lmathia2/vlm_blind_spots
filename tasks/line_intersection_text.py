@@ -35,11 +35,12 @@ _call_counter = 0
 def render(grid_size: int = 6,
            target_intersections: int | None = None,
            n_points: int = 3,
-           prompt_variant: int = 1) -> tuple[Image.Image, str, dict]:
+           prompt_variant: int = 1,
+           seed: int | None = None) -> tuple[Image.Image, str, dict]:
     """Return a tiny placeholder image with line coords as text in the prompt."""
     global _call_counter
     _call_counter += 1
-    rng = Random(_call_counter)
+    rng = Random(seed if seed is not None else _call_counter)
 
     if target_intersections is None:
         target_intersections = rng.choice([0, 1, 2])

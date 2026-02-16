@@ -85,6 +85,85 @@ def parse_row_col(response: str) -> Optional[str]:
     return None
 
 
+@register_parser("mc4")
+def parse_mc4(response: str) -> Optional[str]:
+    """Extract a multiple-choice letter A/B/C/D from response."""
+    # Try {A} format
+    m = re.search(r"\{([A-Da-d])\}", response)
+    if m:
+        return m.group(1).upper()
+    # Try (A) format
+    m = re.search(r"\(([A-Da-d])\)", response)
+    if m:
+        return m.group(1).upper()
+    # Try "answer is A" / "answer: A" patterns
+    m = re.search(r"(?:answer\s*(?:is|:)\s*)([A-Da-d])\b", response, re.IGNORECASE)
+    if m:
+        return m.group(1).upper()
+    # Try standalone A/B/C/D (search from end to get final answer)
+    words = response.split()
+    for word in reversed(words):
+        clean = word.strip(".,;:!?()[]{}\"'")
+        if re.fullmatch(r"[A-Da-d]", clean):
+            return clean.upper()
+    return None
+
+
+@register_parser("exact_string")
+def parse_exact_string(response: str) -> Optional[str]:
+    """Extract an exact string answer from response.
+
+    Tries structured formats first, then strips common preamble.
+    """
+    if not response or not response.strip():
+        return None
+    # Try {answer} format (curly brackets)
+    m = re.search(r"\{([^}]+)\}", response)
+    if m:
+        return m.group(1).strip()
+    # Try "answer" or 'answer' (quoted)
+    m = re.search(r'["\u201c]([^"\u201d]+)["\u201d]', response)
+    if m:
+        return m.group(1).strip()
+    # Strip common preamble patterns and return the rest
+    stripped = response.strip()
+    for prefix in [
+        r"(?:the\s+)?(?:answer|value|text|number|word)\s+is\s*:?\s*",
+        r"(?:it\s+(?:says?|reads?)\s*:?\s*)",
+    ]:
+        m = re.match(prefix, stripped, re.IGNORECASE)
+        if m:
+            return stripped[m.end():].strip().rstrip(".")
+    # If response is short (likely just the answer), return as-is
+    if len(stripped.split()) <= 5:
+        return stripped.rstrip(".")
+    # For longer responses, return first line stripped
+    first_line = stripped.split("\n")[0].strip()
+    return first_line.rstrip(".")
+
+
+@register_parser("csv_words")
+def parse_csv_words(response: str) -> Optional[str]:
+    """Extract sorted comma-separated words from response.
+
+    For tasks where the answer is a set of word names (not single letters).
+    """
+    # Try {word1, word2} format first
+    m = re.search(r"\{([^}]+)\}", response)
+    if m:
+        words = [w.strip() for w in m.group(1).split(",") if w.strip()]
+        if words:
+            return ",".join(sorted(words, key=str.lower))
+    # Try comma-separated list in the response
+    # Look for a line/section with comma-separated capitalized words
+    m = re.search(r"(?:^|:)\s*([A-Z][a-z]+(?:\s*,\s*[A-Z][a-z]+)+)", response, re.MULTILINE)
+    if m:
+        words = [w.strip() for w in m.group(1).split(",") if w.strip()]
+        if words:
+            return ",".join(sorted(words, key=str.lower))
+    return None
+
+
 @register_parser("csv_letters")
 def parse_csv_letters(response: str) -> Optional[str]:
     """Extract sorted comma-separated uppercase letters."""
@@ -108,4 +187,20 @@ def parse_csv_letters(response: str) -> Optional[str]:
             letters.append(clean.upper())
     if letters:
         return ",".join(sorted(set(letters)))
+    return None
+
+
+@register_parser("csv_cell_labels")
+def parse_csv_cell_labels(response: str) -> Optional[str]:
+    """Extract sorted comma-separated cell labels like A1, B2, C3."""
+    # Try {A1, B2, C3} format first
+    m = re.search(r"\{([^}]+)\}", response)
+    if m:
+        labels = re.findall(r"[A-Za-z]\d+", m.group(1))
+        if labels:
+            return ",".join(sorted(set(l.upper() for l in labels)))
+    # Try comma-separated list outside braces
+    labels = re.findall(r"\b([A-Za-z]\d+)\b", response)
+    if labels:
+        return ",".join(sorted(set(l.upper() for l in labels)))
     return None

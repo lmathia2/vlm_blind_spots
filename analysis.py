@@ -203,6 +203,11 @@ def generate_all_plots(results_path: str | Path):
         if True in modes and False in modes:
             _plot_reasoning_comparison(df, output_dir)
 
+    # Perception vs reasoning plot (if text-only controls exist)
+    text_tasks = {t for _, t, _ in PERCEPTION_PAIRS}
+    if any(df["task_name"].isin(text_tasks)):
+        plot_perception_vs_reasoning(results_path)
+
 
 def _plot_reasoning_comparison(df: pd.DataFrame, output_dir: Path):
     """Plot grouped bar chart comparing reasoning vs no-reasoning accuracy."""
@@ -329,6 +334,101 @@ def compute_bias(results_path: str | Path, task_name: str) -> dict:
     }
 
 
+CLUTTER_TAX_PAIRS = [
+    ("line_intersection", "line_chart_crossing", "P4 Intersection Detection"),
+    ("touching_circles", "form_checkboxes", "P5 Fine State Discrimination"),
+    ("colored_paths", "arrow_following", "P2 Path Following"),
+]
+
+
+def print_clutter_tax(results_path: str | Path):
+    """Print matched-pair comparison: clean geometric vs business-context accuracy."""
+    results = load_results(results_path)
+    if not results:
+        print("No results found.")
+        return
+
+    df = pd.DataFrame(results)
+    # Use non-reasoning results only
+    if "reasoning_mode" in df.columns:
+        df = df[(df["reasoning_mode"].isna()) | (df["reasoning_mode"] == False)]
+
+    print(f"\n{'Clean (Geometric)':<25} {'Business Context':<25} {'Primitive':<30} {'Clean':>7} {'Biz':>7} {'Gap':>7}")
+    print("-" * 108)
+
+    for clean_task, biz_task, primitive in CLUTTER_TAX_PAIRS:
+        clean_df = df[df["task_name"] == clean_task]
+        biz_df = df[df["task_name"] == biz_task]
+
+        clean_acc = clean_df["correct"].mean() if len(clean_df) > 0 else None
+        biz_acc = biz_df["correct"].mean() if len(biz_df) > 0 else None
+
+        clean_str = f"{clean_acc:.1%}" if clean_acc is not None else "—"
+        biz_str = f"{biz_acc:.1%}" if biz_acc is not None else "—"
+
+        if clean_acc is not None and biz_acc is not None:
+            gap = biz_acc - clean_acc
+            gap_str = f"{gap:+.1%}"
+        else:
+            gap_str = "—"
+
+        print(f"{clean_task:<25} {biz_task:<25} {primitive:<30} {clean_str:>7} {biz_str:>7} {gap_str:>7}")
+
+
+def plot_clutter_tax(results_path: str | Path):
+    """Generate grouped bar chart comparing clean vs business-context accuracy."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    from config import REPORT_ASSETS_DIR
+
+    results = load_results(results_path)
+    if not results:
+        return
+
+    df = pd.DataFrame(results)
+    if "reasoning_mode" in df.columns:
+        df = df[(df["reasoning_mode"].isna()) | (df["reasoning_mode"] == False)]
+
+    output_dir = REPORT_ASSETS_DIR
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    labels = []
+    clean_accs = []
+    biz_accs = []
+
+    for clean_task, biz_task, primitive in CLUTTER_TAX_PAIRS:
+        clean_df = df[df["task_name"] == clean_task]
+        biz_df = df[df["task_name"] == biz_task]
+        if len(clean_df) == 0 and len(biz_df) == 0:
+            continue
+        labels.append(primitive.split(" ", 1)[1] if " " in primitive else primitive)
+        clean_accs.append(clean_df["correct"].mean() if len(clean_df) > 0 else 0)
+        biz_accs.append(biz_df["correct"].mean() if len(biz_df) > 0 else 0)
+
+    if not labels:
+        return
+
+    x = np.arange(len(labels))
+    width = 0.35
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.bar(x - width / 2, clean_accs, width, label="Clean (Geometric)", color="steelblue")
+    ax.bar(x + width / 2, biz_accs, width, label="Business Context", color="coral")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=15, ha="right")
+    ax.set_ylabel("Accuracy")
+    ax.set_title("Clutter Tax: Clean vs Business Context")
+    ax.set_ylim(0, 1)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(output_dir / "clutter_tax.png", dpi=150)
+    plt.close(fig)
+    print("Saved clutter_tax.png")
+
+
 def save_failure_examples(results_path: str | Path, output_dir: str | Path, n: int = 20):
     """Copy the N worst failures to output directory."""
     import shutil
@@ -354,3 +454,199 @@ def save_failure_examples(results_path: str | Path, output_dir: str | Path, n: i
             f.write(json.dumps(fail) + "\n")
 
     print(f"Saved {min(n, len(failures))} failure examples to {output_dir}")
+
+
+# ---------- Perception vs Reasoning Diagnostic ----------
+
+PERCEPTION_PAIRS = [
+    ("line_intersection", "line_intersection_text", "Line Intersection Counting"),
+    ("nested_squares", "nested_squares_text", "Nested Square Counting"),
+    ("decision_flowchart", "decision_flowchart_text", "Flowchart Traversal"),
+    ("counting_grid", "counting_grid_text", "Grid Counting"),
+]
+
+
+def _classify_failure(image_acc: float | None, text_acc: float | None) -> str:
+    """Classify failure mode based on image vs text accuracy gap.
+
+    Returns one of:
+      - "perceptual" — text >> image: model reasons fine but can't see it
+      - "reasoning" — text ≈ image (both low): model can't solve it even with text
+      - "mixed" — text > image but both poor: partial perceptual, partial reasoning
+      - "not_a_failure" — image accuracy is already high (>80%)
+      - "insufficient_data" — one or both missing
+    """
+    if image_acc is None or text_acc is None:
+        return "insufficient_data"
+    if image_acc > 0.80:
+        return "not_a_failure"
+    gap = text_acc - image_acc
+    if text_acc > 0.80 and gap > 0.15:
+        return "perceptual"
+    if gap < 0.10 and text_acc < 0.80:
+        return "reasoning"
+    if gap >= 0.10:
+        return "mixed"
+    return "reasoning"
+
+
+def print_perception_vs_reasoning(results_path: str | Path):
+    """Print paired comparison: image-based vs text-only accuracy per task.
+
+    Classifies each failure as perceptual, reasoning, or mixed.
+    """
+    results = load_results(results_path)
+    if not results:
+        print("No results found.")
+        return
+
+    df = pd.DataFrame(results)
+
+    # Use non-reasoning results only for the base comparison
+    if "reasoning_mode" in df.columns:
+        df_base = df[(df["reasoning_mode"].isna()) | (df["reasoning_mode"] == False)]
+    else:
+        df_base = df
+
+    # Check if reasoning results exist for the reasoning lift column
+    has_reasoning = (
+        "reasoning_mode" in df.columns
+        and True in df["reasoning_mode"].values
+    )
+    if has_reasoning:
+        df_reason = df[df["reasoning_mode"] == True]
+
+    print("\n┌─ Perception vs Reasoning Diagnostic ─────────────────────────────────────────┐")
+    header = (
+        f"  {'Capability':<28} {'Image':>7} {'Text':>7} {'Gap':>7} {'Classification':<18}"
+    )
+    if has_reasoning:
+        header += f"  {'Img+Think':>10} {'Txt+Think':>10}"
+    print(header)
+    print("  " + "─" * 74 + ("─" * 24 if has_reasoning else ""))
+
+    for image_task, text_task, label in PERCEPTION_PAIRS:
+        img_df = df_base[df_base["task_name"] == image_task]
+        txt_df = df_base[df_base["task_name"] == text_task]
+
+        img_acc = img_df["correct"].mean() if len(img_df) > 0 else None
+        txt_acc = txt_df["correct"].mean() if len(txt_df) > 0 else None
+
+        classification = _classify_failure(img_acc, txt_acc)
+
+        img_str = f"{img_acc:.1%}" if img_acc is not None else "—"
+        txt_str = f"{txt_acc:.1%}" if txt_acc is not None else "—"
+
+        if img_acc is not None and txt_acc is not None:
+            gap = txt_acc - img_acc
+            gap_str = f"{gap:+.1%}"
+        else:
+            gap_str = "—"
+
+        # Color the classification
+        class_colors = {
+            "perceptual": "\033[33m",      # yellow
+            "reasoning": "\033[31m",       # red
+            "mixed": "\033[35m",           # magenta
+            "not_a_failure": "\033[32m",   # green
+            "insufficient_data": "\033[90m",  # gray
+        }
+        color = class_colors.get(classification, "")
+        reset = "\033[0m" if color else ""
+
+        n_img = len(img_df)
+        n_txt = len(txt_df)
+        line = (
+            f"  {label:<28} {img_str:>7} {txt_str:>7} {gap_str:>7} "
+            f"{color}{classification:<18}{reset}"
+        )
+
+        if has_reasoning:
+            img_r = df_reason[df_reason["task_name"] == image_task]
+            txt_r = df_reason[df_reason["task_name"] == text_task]
+            img_r_str = f"{img_r['correct'].mean():.1%}" if len(img_r) > 0 else "—"
+            txt_r_str = f"{txt_r['correct'].mean():.1%}" if len(txt_r) > 0 else "—"
+            line += f"  {img_r_str:>10} {txt_r_str:>10}"
+
+        print(line)
+        print(f"  {'':>28} (n={n_img:>3})  (n={n_txt:>3})")
+
+    print("└" + "─" * 78 + ("─" * 24 if has_reasoning else "") + "┘")
+    print()
+    print("  Classification key:")
+    print("    \033[33mperceptual\033[0m    — text >> image: can reason but can't see it")
+    print("    \033[31mreasoning\033[0m     — text ≈ image (both low): can't solve even with text")
+    print("    \033[35mmixed\033[0m         — text > image but both poor: partial both")
+    print("    \033[32mnot_a_failure\033[0m — image accuracy already >80%")
+    print()
+
+
+def plot_perception_vs_reasoning(results_path: str | Path):
+    """Generate grouped bar chart comparing image vs text-only accuracy."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    from config import REPORT_ASSETS_DIR
+
+    results = load_results(results_path)
+    if not results:
+        return
+
+    df = pd.DataFrame(results)
+    if "reasoning_mode" in df.columns:
+        df = df[(df["reasoning_mode"].isna()) | (df["reasoning_mode"] == False)]
+
+    output_dir = REPORT_ASSETS_DIR
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    labels = []
+    img_accs = []
+    txt_accs = []
+    classifications = []
+
+    for image_task, text_task, label in PERCEPTION_PAIRS:
+        img_df = df[df["task_name"] == image_task]
+        txt_df = df[df["task_name"] == text_task]
+        if len(img_df) == 0 and len(txt_df) == 0:
+            continue
+
+        img_acc = img_df["correct"].mean() if len(img_df) > 0 else 0
+        txt_acc = txt_df["correct"].mean() if len(txt_df) > 0 else 0
+
+        labels.append(label)
+        img_accs.append(img_acc)
+        txt_accs.append(txt_acc)
+        classifications.append(_classify_failure(
+            img_acc if len(img_df) > 0 else None,
+            txt_acc if len(txt_df) > 0 else None,
+        ))
+
+    if not labels:
+        return
+
+    x = np.arange(len(labels))
+    width = 0.35
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    bars1 = ax.bar(x - width / 2, img_accs, width, label="Image-based", color="steelblue")
+    bars2 = ax.bar(x + width / 2, txt_accs, width, label="Text-only", color="coral")
+
+    # Annotate classification
+    for i, cls in enumerate(classifications):
+        ax.annotate(
+            cls, (x[i], max(img_accs[i], txt_accs[i]) + 0.03),
+            ha="center", fontsize=8, fontstyle="italic", color="gray",
+        )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=15, ha="right")
+    ax.set_ylabel("Accuracy")
+    ax.set_title("Perception vs Reasoning Diagnostic")
+    ax.set_ylim(0, 1.15)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(output_dir / "perception_vs_reasoning.png", dpi=150)
+    plt.close(fig)
+    print("Saved perception_vs_reasoning.png")

@@ -66,15 +66,12 @@ def _generate_task(config: dict, args) -> Path:
             n_per = max(1, math.ceil(min_samples / n_combos))
             n_per = min(n_per, max_per)
 
-        # Cap total samples per task; randomly sample combos if needed
+        # Cap total samples per task; stratified-sample combos if needed
         max_total = args.max_total
         total_planned = len(param_combos) * n_per
         if total_planned > max_total:
-            import random as _rng
-            _rng.seed(42)
             keep = max(1, max_total // n_per)
-            _rng.shuffle(param_combos)
-            param_combos = param_combos[:keep]
+            param_combos = _stratified_sample(config, param_combos, keep)
     else:
         param_combos = [config["default_params"]]
         n_per = args.n or 10
@@ -144,6 +141,50 @@ def _sweep_combos(config: dict) -> list[dict]:
     return combos
 
 
+def _stratified_sample(config: dict, combos: list[dict], keep: int) -> list[dict]:
+    """Select `keep` configs ensuring every sweep axis value appears at least once.
+
+    Strategy:
+      1. For each sweep axis value, pick one combo containing it (coverage pass).
+      2. Fill remaining budget by sampling from uncovered combos, preferring
+         those that add coverage of under-represented axis values.
+    """
+    import random as _rng
+    _rng.seed(42)
+
+    sweep = config.get("sweep_axes", {})
+    if not sweep or keep >= len(combos):
+        return combos[:keep]
+
+    keys = list(sweep.keys())
+    selected_indices: list[int] = []
+    selected_set: set[int] = set()
+
+    # Pass 1: ensure every value of every axis appears at least once
+    for key in keys:
+        for value in sweep[key]:
+            # Find a combo that has this axis value and isn't selected yet
+            candidates = [
+                i for i, c in enumerate(combos)
+                if c.get(key) == value and i not in selected_set
+            ]
+            if candidates and len(selected_set) < keep:
+                pick = _rng.choice(candidates)
+                selected_indices.append(pick)
+                selected_set.add(pick)
+
+    # Pass 2: fill remaining budget, prioritizing diversity
+    remaining = [i for i in range(len(combos)) if i not in selected_set]
+    _rng.shuffle(remaining)
+    for i in remaining:
+        if len(selected_set) >= keep:
+            break
+        selected_indices.append(i)
+        selected_set.add(i)
+
+    return [combos[i] for i in selected_indices]
+
+
 def cmd_evaluate(args):
     """Evaluate a manifest with the VLM."""
     from harness import evaluate_manifest
@@ -175,6 +216,15 @@ def cmd_analyze(args):
         sys.exit(1)
 
     print_summary(results_path)
+
+    if args.diagnostic:
+        from analysis import print_perception_vs_reasoning
+        print_perception_vs_reasoning(results_path)
+
+    if args.clutter_tax:
+        from analysis import print_clutter_tax
+        print_clutter_tax(results_path)
+
     if args.plot:
         generate_all_plots(results_path)
 
@@ -232,6 +282,10 @@ def main():
     an = subparsers.add_parser("analyze", help="Analyze results")
     an.add_argument("--results", required=True, help="Path to results JSONL")
     an.add_argument("--plot", action="store_true", help="Generate plots")
+    an.add_argument("--diagnostic", action="store_true",
+                     help="Print perception vs reasoning diagnostic")
+    an.add_argument("--clutter-tax", action="store_true",
+                     help="Print clutter tax comparison")
     an.set_defaults(func=cmd_analyze)
 
     # baseline
