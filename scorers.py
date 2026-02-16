@@ -25,6 +25,16 @@ def score_exact_match(parsed: Optional[str], ground_truth: str) -> dict:
     return {"correct": correct, "score": 1.0 if correct else 0.0}
 
 
+@register_scorer("set_member")
+def score_set_member(parsed: Optional[str], ground_truth: str) -> dict:
+    """Check if parsed answer is one of the valid answers (comma-separated GT)."""
+    if parsed is None:
+        return {"correct": False, "score": 0.0}
+    valid = {x.strip().upper() for x in ground_truth.split(",") if x.strip()}
+    correct = parsed.strip().upper() in valid
+    return {"correct": correct, "score": 1.0 if correct else 0.0}
+
+
 @register_scorer("integer_distance")
 def score_integer_distance(parsed: Optional[str], ground_truth: str) -> dict:
     """Exact match + signed error (positive = overcount)."""

@@ -15,7 +15,7 @@ TASK_CONFIG = {
     "prompt_template": None,  # filled dynamically per sample
     "prompt_template_v2": None,  # dynamic v2 prompt set in render()
     "parser": "letter",
-    "scorer": "exact_match",
+    "scorer": "set_member",
     "default_params": {
         "n_boxes": 5,
         "n_arrows": 5,
@@ -106,6 +106,24 @@ def _follow_path(start: int, edges: list[tuple[int, int]], rng: Random) -> list[
     return path
 
 
+def _all_terminals(start: int, adj: dict[int, list[int]]) -> set[int]:
+    """Find all terminal (dead-end) nodes reachable from start via DFS."""
+    terminals = set()
+    stack = [start]
+    visited = set()
+    while stack:
+        node = stack.pop()
+        if node in visited:
+            continue
+        visited.add(node)
+        if node not in adj or not adj[node]:
+            terminals.add(node)
+        else:
+            for neighbor in adj[node]:
+                stack.append(neighbor)
+    return terminals
+
+
 def render(
     n_boxes: int = 5,
     n_arrows: int = 5,
@@ -158,6 +176,13 @@ def render(
     terminal = path[-1]
     start_label = labels[start]
     terminal_label = labels[terminal]
+
+    # Compute all valid terminal boxes reachable from start
+    adj: dict[int, list[int]] = {}
+    for src, dst in edges:
+        adj.setdefault(src, []).append(dst)
+    all_terminal_indices = _all_terminals(start, adj)
+    all_terminal_labels = sorted(labels[i] for i in all_terminal_indices)
 
     prompt = (
         f"Starting at box {start_label}, follow the arrows. "
@@ -246,11 +271,12 @@ def render(
     edge_labels = [(labels[s], labels[d]) for s, d in edges]
     path_labels = [labels[n] for n in path]
 
-    ground_truth = terminal_label
+    ground_truth = ",".join(all_terminal_labels)
     metadata = {
         "prompt": prompt,
         "start_box": start_label,
         "terminal_box": terminal_label,
+        "valid_terminals": all_terminal_labels,
         "edges": edge_labels,
         "path": path_labels,
         "n_boxes": n_boxes,

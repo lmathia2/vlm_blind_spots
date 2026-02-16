@@ -45,6 +45,17 @@ def render(depth: int = 3, resolution: int = 512, line_thickness: int = 2,
     _call_counter += 1
     rng = Random(_call_counter)
 
+    # Cap depth so all squares are visible (smallest side >= 5px)
+    min_square_px = 5
+    effective_depth = depth
+    size_check = 0.85
+    for d in range(1, depth + 1):
+        if size_check * resolution < min_square_px:
+            effective_depth = d - 1
+            break
+        size_check *= reduction_factor
+    effective_depth = max(1, effective_depth)
+
     dpi = 100
     fig_size = resolution / dpi
     fig = plt.figure(figsize=(fig_size, fig_size), dpi=dpi)
@@ -60,7 +71,7 @@ def render(depth: int = 3, resolution: int = 512, line_thickness: int = 2,
     size = 0.85  # initial square size as fraction of canvas
     cx, cy = 0.5, 0.5
 
-    for i in range(depth):
+    for i in range(effective_depth):
         half = size / 2
         rect = patches.Rectangle(
             (cx - half, cy - half), size, size,
@@ -87,9 +98,10 @@ def render(depth: int = 3, resolution: int = 512, line_thickness: int = 2,
     buf.seek(0)
     img = Image.open(buf).convert("RGB")
 
-    ground_truth = str(depth)
+    ground_truth = str(effective_depth)
     metadata = {
-        "depth": depth,
+        "depth": effective_depth,
+        "requested_depth": depth,
         "resolution": resolution,
         "line_thickness": line_thickness,
         "reduction_factor": reduction_factor,
