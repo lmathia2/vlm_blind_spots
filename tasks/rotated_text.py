@@ -85,6 +85,10 @@ def render(
 
     ground_truth = text
     metadata = {
+        "prompt": (
+            "What does the rotated text in this image say? "
+            "Put your answer in curly brackets, e.g., {Revenue}."
+        ),
         "rotation": rotation,
         "font_size": font_size,
         "resolution": resolution,

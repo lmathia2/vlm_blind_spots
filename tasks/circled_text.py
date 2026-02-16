@@ -133,6 +133,10 @@ def render(
 
     ground_truth = target_word
     metadata = {
+        "prompt": (
+            "Which word in this image is circled? "
+            "Put your answer in curly brackets, e.g., {Revenue}."
+        ),
         "font_size": font_size,
         "ellipse_thickness": ellipse_thickness,
         "resolution": resolution,

@@ -201,7 +201,7 @@ def cmd_evaluate(args):
         results_path = RESULTS_DIR / manifest_path.stem / "results.jsonl"
 
     model = args.model or MODEL
-    reasoning = getattr(args, "reasoning", False)
+    reasoning = not getattr(args, "no_reasoning", False)
     evaluate_manifest(manifest_path, results_path, model=model,
                       max_workers=args.workers, reasoning=reasoning)
 
@@ -218,8 +218,8 @@ def cmd_analyze(args):
     print_summary(results_path)
 
     if args.diagnostic:
-        from analysis import print_perception_vs_reasoning
-        print_perception_vs_reasoning(results_path)
+        from analysis import print_full_diagnostic
+        print_full_diagnostic(results_path)
 
     if args.clutter_tax:
         from analysis import print_clutter_tax
@@ -274,8 +274,8 @@ def main():
     ev.add_argument("--model", default=None, help="Model override")
     ev.add_argument("--output", default=None, help="Output results path")
     ev.add_argument("--workers", type=int, default=None, help="Max parallel workers")
-    ev.add_argument("--reasoning", action="store_true",
-                     help="Enable extended thinking (reasoning mode)")
+    ev.add_argument("--no-reasoning", action="store_true",
+                     help="Disable extended thinking (reasoning mode, enabled by default)")
     ev.set_defaults(func=cmd_evaluate)
 
     # analyze
@@ -283,7 +283,7 @@ def main():
     an.add_argument("--results", required=True, help="Path to results JSONL")
     an.add_argument("--plot", action="store_true", help="Generate plots")
     an.add_argument("--diagnostic", action="store_true",
-                     help="Print perception vs reasoning diagnostic")
+                     help="Print perception vs reasoning diagnostic with all task pairs")
     an.add_argument("--clutter-tax", action="store_true",
                      help="Print clutter tax comparison")
     an.set_defaults(func=cmd_analyze)

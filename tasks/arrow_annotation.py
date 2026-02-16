@@ -102,6 +102,10 @@ def render(
 
     ground_truth = words[target_idx]
     metadata = {
+        "prompt": (
+            "What word does the red arrow point to? "
+            "Put your answer in curly brackets, e.g., {Revenue}."
+        ),
         "n_words": n_words,
         "arrow_width": arrow_width,
         "resolution": resolution,

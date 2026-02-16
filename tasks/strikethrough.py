@@ -103,6 +103,10 @@ def render(
     ground_truth = ",".join(sorted(struck_words, key=str.lower))
 
     metadata = {
+        "prompt": (
+            "Which words are struck through? List all struck-through words, "
+            "separated by commas. Put your answer in curly brackets, e.g., {Revenue, Cost}."
+        ),
         "n_words": n_words,
         "n_struck": n_struck,
         "line_thickness": line_thickness,
@@ -111,5 +115,6 @@ def render(
         "words": words,
         "labels": labels,
         "struck_words": struck_words,
+        "struck_indices": struck_indices,
     }
     return img, ground_truth, metadata

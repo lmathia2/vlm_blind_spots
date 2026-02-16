@@ -101,6 +101,10 @@ def render(
 
     ground_truth = text
     metadata = {
+        "prompt": (
+            "What does the text in this image say? "
+            "Put your answer in curly brackets, e.g., {Total: $500}."
+        ),
         "font_size": font_size,
         "blur_radius": blur_radius,
         "rotation": rotation,

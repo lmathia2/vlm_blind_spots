@@ -100,10 +100,14 @@ def parse_mc4(response: str) -> Optional[str]:
     m = re.search(r"(?:answer\s*(?:is|:)\s*)([A-Da-d])\b", response, re.IGNORECASE)
     if m:
         return m.group(1).upper()
+    # Try **A** bold markdown format
+    m = re.search(r"\*\*([A-Da-d])\*\*", response)
+    if m:
+        return m.group(1).upper()
     # Try standalone A/B/C/D (search from end to get final answer)
     words = response.split()
     for word in reversed(words):
-        clean = word.strip(".,;:!?()[]{}\"'")
+        clean = word.strip(".,;:!?()[]{}\"'*")
         if re.fullmatch(r"[A-Da-d]", clean):
             return clean.upper()
     return None
@@ -147,11 +151,16 @@ def parse_csv_words(response: str) -> Optional[str]:
     """Extract sorted comma-separated words from response.
 
     For tasks where the answer is a set of word names (not single letters).
+    Returns "" for explicitly empty answers like {}, {None}, {N/A}.
     """
-    # Try {word1, word2} format first
-    m = re.search(r"\{([^}]+)\}", response)
+    # Try {word1, word2} or {} format first
+    m = re.search(r"\{([^}]*)\}", response)
     if m:
-        words = [w.strip() for w in m.group(1).split(",") if w.strip()]
+        inner = m.group(1).strip()
+        # Treat {}, {None}, {none}, {N/A} as empty set
+        if not inner or inner.lower() in ("none", "n/a", "empty", "no items"):
+            return ""
+        words = [w.strip() for w in inner.split(",") if w.strip()]
         if words:
             return ",".join(sorted(words, key=str.lower))
     # Try comma-separated list in the response

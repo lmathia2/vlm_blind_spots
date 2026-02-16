@@ -194,6 +194,8 @@ def render(resolution: int = 768, n_points: int = 100,
         "n_points": n_points,
         "target_crossings": target_crossings,
         "actual_crossings": actual_crossings,
+        "series_a": best_y1.tolist(),
+        "series_b": best_y2.tolist(),
     }
 
     return img, ground_truth, metadata

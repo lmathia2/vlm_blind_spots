@@ -105,5 +105,6 @@ def render(
         "line_spacing": line_spacing,
         "resolution": resolution,
         "target_line_num": target_line_num,
+        "lines": lines,
     }
     return img, ground_truth, metadata

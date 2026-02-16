@@ -1,6 +1,7 @@
 # Generated data and results
 data/
 results/
+results_haiku45/
 report_assets/
 
 # Reference repo (large, cloned separately)

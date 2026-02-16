@@ -118,11 +118,17 @@ def render(
 
     ground_truth = ",".join(sorted(checked_set))
     metadata = {
+        "prompt": (
+            "Which options are checked? List only the letters of the "
+            "checked options, separated by commas, in curly brackets. "
+            "For example: {A, C, E}."
+        ),
         "n_options": n_options,
         "n_checked": n_checked,
         "box_size": box_size,
         "font_size": font_size,
         "resolution": resolution,
         "checked_letters": sorted(checked_set),
+        "all_options": letters,
     }
     return img, ground_truth, metadata

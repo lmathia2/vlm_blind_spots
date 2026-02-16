@@ -89,6 +89,7 @@ def render(
 
     ground_truth = "Yes" if distance <= 0 else "No"
     metadata = {
+        "prompt": "Are the two circles touching each other? Answer Yes/No.",
         "distance": distance,
         "resolution": resolution,
         "rotation": rotation,
