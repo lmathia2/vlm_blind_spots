@@ -21,7 +21,7 @@ TASK_CONFIG = {
         "the blue and red lines. Answer in curly brackets, e.g., {2}."
     ),
     "parser": "integer",
-    "scorer": "integer_distance",
+    "scorer": "exact_match",
     "default_params": {"resolution": 768, "n_points": 100, "target_crossings": None},
     "sweep_axes": {
         "resolution": [384, 512, 768, 1024],

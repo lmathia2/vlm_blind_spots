@@ -57,6 +57,19 @@ def _load_font(size: int):
     return ImageFont.load_default()
 
 
+def _unique_names(rng: Random, pool: list[str], n: int) -> list[str]:
+    """Sample n unique names from pool, extending with numbered variants if needed."""
+    if n <= len(pool):
+        return rng.sample(pool, n)
+    names = list(pool)
+    rng.shuffle(names)
+    i = len(names) + 1
+    while len(names) < n:
+        names.append(f"{rng.choice(pool)} #{i}")
+        i += 1
+    return names[:n]
+
+
 def _gen_cell(rng: Random, col_idx: int, header: str) -> str:
     """Generate a plausible cell value based on header type."""
     h = header.lower()
@@ -101,10 +114,20 @@ def render(
     header_set = rng.choice(_HEADERS_SETS)
     headers = header_set[:n_cols]
 
-    # Generate data
+    # Choose the name pool for the first column (row IDs)
+    first_header = headers[0].lower()
+    if "employee" in first_header:
+        name_pool = _EMPLOYEE_NAMES
+    elif "item" in first_header:
+        name_pool = _ITEM_NAMES
+    else:
+        name_pool = _PRODUCT_NAMES
+    row_names = _unique_names(rng, name_pool, n_rows)
+
+    # Generate data — first column uses unique names
     data: list[list[str]] = []
-    for _ in range(n_rows):
-        row = [_gen_cell(rng, ci, headers[ci]) for ci in range(n_cols)]
+    for ri in range(n_rows):
+        row = [row_names[ri]] + [_gen_cell(rng, ci, headers[ci]) for ci in range(1, n_cols)]
         data.append(row)
 
     # Draw table
@@ -166,9 +189,9 @@ def render(
             draw.text((x + (cw - tw) // 2, y + (scaled_row_h - th) // 2), cell, fill="black", font=scaled_font)
             x += cw
 
-    # Pick a random target cell
+    # Pick a random target cell (col >= 1 to avoid tautological questions)
     target_row = rng.randint(0, n_rows - 1)
-    target_col = rng.randint(0, n_cols - 1)
+    target_col = rng.randint(1, n_cols - 1)
     target_header = headers[target_col]
     # Use first-column value as row identifier
     row_id = data[target_row][0]

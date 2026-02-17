@@ -164,11 +164,6 @@ def _format_trace(result: dict, index: int, total: int) -> str:
 
     # Build score detail string from scorer-specific fields
     details = []
-    if "error" in result and result["error"] is not None:
-        details.append(f"error={result['error']:+d}")
-    if "row_correct" in result:
-        details.append(f"row={'✓' if result['row_correct'] else '✗'}")
-        details.append(f"col={'✓' if result['col_correct'] else '✗'}")
     if "precision" in result and scorer == "set_match":
         details.append(f"P={result['precision']:.0%}")
         details.append(f"R={result['recall']:.0%}")
@@ -269,8 +264,7 @@ def evaluate_manifest(
                     "output_tokens": result.get("output_tokens"),
                 }
                 # Include scorer-specific fields
-                for key in ("error", "abs_error", "row_correct", "col_correct",
-                            "precision", "recall", "error_message"):
+                for key in ("precision", "recall", "error_message"):
                     if key in result:
                         trace_record[key] = result[key]
                 # Include reasoning fields

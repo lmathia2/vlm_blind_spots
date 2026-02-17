@@ -15,7 +15,7 @@ TASK_CONFIG = {
     "prompt_template": "",  # filled dynamically
     "prompt_template_v2": "",
     "parser": "row_col",  # default; overridden per sample
-    "scorer": "row_col",
+    "scorer": "exact_match",
     "default_params": {
         "rows": 8,
         "cols": 8,

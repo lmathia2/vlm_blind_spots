@@ -50,6 +50,47 @@ _ITEM_POOLS = {
 }
 
 # Circle center positions for 2, 3, 4 circles (in 0-1 normalized coords)
+def _point_in_region(px, py, centers, radius, member_indices, n_circles):
+    """Check if (px, py) is inside all member circles and outside all non-member circles."""
+    for i in range(n_circles):
+        cx, cy = centers[i]
+        inside = (px - cx)**2 + (py - cy)**2 <= radius**2
+        if i in member_indices and not inside:
+            return False
+        if i not in member_indices and inside:
+            return False
+    return True
+
+
+def _adjust_to_region(px, py, centers, radius, member_indices, n_circles, max_iter=20):
+    """If (px, py) is not in the correct region, iteratively adjust toward the
+    intersection centroid of member circles until it is.
+
+    Returns adjusted (px, py).
+    """
+    if _point_in_region(px, py, centers, radius, member_indices, n_circles):
+        return px, py
+
+    # Target: centroid of member circle centers
+    member_centers = [centers[i] for i in member_indices]
+    tcx = sum(c[0] for c in member_centers) / len(member_centers)
+    tcy = sum(c[1] for c in member_centers) / len(member_centers)
+
+    # Binary-search along the line from (px, py) toward (tcx, tcy)
+    lo, hi = 0.0, 1.0
+    best_x, best_y = tcx, tcy  # centroid is guaranteed inside for 2-3 circles
+    for _ in range(max_iter):
+        mid = (lo + hi) / 2
+        mx = px + (tcx - px) * mid
+        my = py + (tcy - py) * mid
+        if _point_in_region(mx, my, centers, radius, member_indices, n_circles):
+            best_x, best_y = mx, my
+            hi = mid  # try to stay closer to original position
+        else:
+            lo = mid  # move closer to centroid
+    return best_x, best_y
+
+
 _LAYOUTS = {
     2: [(0.38, 0.5), (0.62, 0.5)],
     3: [(0.38, 0.58), (0.62, 0.58), (0.50, 0.38)],
@@ -291,6 +332,9 @@ def render(
             push = radius * 0.15
             cx = cx + dx / dist * push
             cy = cy + dy / dist * push
+
+        # Verify point is in the correct region; adjust if not
+        cx, cy = _adjust_to_region(cx, cy, centers, radius, region, n_circles)
 
         # Render items as stacked text
         for j, item in enumerate(items):

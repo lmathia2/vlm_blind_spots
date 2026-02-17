@@ -17,10 +17,6 @@ RNG = Random(42)
 
 # Reference prompts from the BlindTest paper
 PROMPTS = {
-    "line_intersection": (
-        "Count the intersection points where the blue and red lines meet. "
-        "Put your answer in curly brackets, e.g., {2}."
-    ),
     "touching_circle": (
         "Are the two circles touching each other? Answer with Yes/No."
     ),
@@ -79,53 +75,6 @@ def _balanced_sample(items: list, key_fn, max_per_class: int = 20) -> list:
         RNG.shuffle(pool)
         sampled.extend(pool[:max_per_class])
     return sampled
-
-
-def load_line_intersection(max_per_class: int = 20) -> list[dict]:
-    """Load LineIntersection images. Ground truth from gt_{N} in filename."""
-    base = REFERENCE_DIR / "src" / "LineIntersection" / "images" / "Count-prompt"
-    model_dir = _find_model_dir(base)
-    if not model_dir:
-        print("  WARNING: No LineIntersection model dir found")
-        return []
-
-    images = _collect_images(model_dir)
-    pattern = re.compile(r"gt_(\d+)_image_(\d+)_thickness_(\d+)_resolution_(\d+)")
-
-    parsed = []
-    for img in images:
-        m = pattern.search(img.name)
-        if m:
-            gt = m.group(1)
-            parsed.append({
-                "image_path": str(img),
-                "ground_truth": gt,
-                "params": {
-                    "gt_intersections": int(gt),
-                    "image_id": int(m.group(2)),
-                    "thickness": int(m.group(3)),
-                    "resolution": int(m.group(4)),
-                },
-            })
-
-    sampled = _balanced_sample(parsed, lambda x: x["ground_truth"], max_per_class)
-    records = []
-    for item in sampled:
-        records.append({
-            "sample_id": uuid.uuid4().hex[:8],
-            "task_name": "line_intersection",
-            "image_path": item["image_path"],
-            "prompt": PROMPTS["line_intersection"],
-            "ground_truth": item["ground_truth"],
-            "parser": "integer",
-            "scorer": "integer_distance",
-            "params": item["params"],
-            "source": "blindtest",
-        })
-
-    print(f"  LineIntersection: {len(records)} samples "
-          f"(from {len(images)} images, {len(parsed)} parseable)")
-    return records
 
 
 def load_touching_circle(max_per_class: int = 20) -> list[dict]:
@@ -215,7 +164,7 @@ def load_nested_squares(max_per_class: int = 20) -> list[dict]:
             "prompt": PROMPTS["nested_squares"],
             "ground_truth": item["ground_truth"],
             "parser": "integer",
-            "scorer": "integer_distance",
+            "scorer": "exact_match",
             "params": item["params"],
             "source": "blindtest",
         })
@@ -263,7 +212,7 @@ def load_counting_grid(max_per_class: int = 20) -> list[dict]:
             "prompt": PROMPTS["counting_grid"],
             "ground_truth": item["ground_truth"],
             "parser": "row_col",
-            "scorer": "row_col",
+            "scorer": "exact_match",
             "params": item["params"],
             "source": "blindtest",
         })
@@ -305,7 +254,7 @@ def load_counting_circles(max_per_class: int = 20) -> list[dict]:
             "prompt": PROMPTS["counting_circles"],
             "ground_truth": item["ground_truth"],
             "parser": "integer",
-            "scorer": "integer_distance",
+            "scorer": "exact_match",
             "params": item["params"],
             "source": "blindtest",
         })
@@ -322,7 +271,6 @@ def load_counting_circles(max_per_class: int = 20) -> list[dict]:
 
 
 ALL_LOADERS = [
-    load_line_intersection,
     load_touching_circle,
     load_nested_squares,
     load_counting_grid,

@@ -9,7 +9,7 @@ TASK_CONFIG = {
     "prompt_template": None,  # dynamic per sample
     "prompt_template_v2": None,
     "parser": "integer",
-    "scorer": "integer_distance",
+    "scorer": "exact_match",
     "default_params": {
         "depth": 3,
         "branching": 2,

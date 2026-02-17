@@ -449,7 +449,7 @@ def fig9_summary_pie(pairs):
     for autotext in autotexts:
         autotext.set_fontweight("bold")
 
-    ax.set_title("Error Type Distribution Across 35 Tasks", fontsize=13, fontweight="bold")
+    ax.set_title(f"Error Type Distribution Across {len(pairs)} Tasks", fontsize=13, fontweight="bold")
     plt.tight_layout()
     fig.savefig(FIG_DIR / "fig9_summary_pie.png", dpi=150, bbox_inches="tight")
     plt.close(fig)

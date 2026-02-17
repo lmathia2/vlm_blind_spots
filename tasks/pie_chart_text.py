@@ -45,9 +45,20 @@ def render(
     target_pct = percentages[target_idx]
 
     distractors = set()
-    while len(distractors) < 3:
-        d = target_pct + rng.choice([-10, -5, -3, 3, 5, 10])
+    offsets = [-10, -5, -3, 3, 5, 10]
+    rng.shuffle(offsets)
+    for offset in offsets:
+        d = target_pct + offset
         if d != target_pct and 1 <= d <= 60:
+            distractors.add(d)
+        if len(distractors) >= 3:
+            break
+    # Fallback: widen offset range
+    for offset in range(-20, 21):
+        if len(distractors) >= 3:
+            break
+        d = target_pct + offset
+        if d != target_pct and 1 <= d <= 60 and d not in distractors:
             distractors.add(d)
 
     options = [target_pct] + sorted(distractors)

@@ -14,7 +14,7 @@ TASK_CONFIG = {
     "prompt_template": "",
     "prompt_template_v2": "",
     "parser": "integer",
-    "scorer": "integer_distance",
+    "scorer": "exact_match",
     "default_params": {
         "n_points": 20,
         "target_crossings": None,

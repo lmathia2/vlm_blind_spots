@@ -21,7 +21,7 @@ TASK_CONFIG = {
         "Answer in curly brackets, e.g., {3}."
     ),
     "parser": "integer",
-    "scorer": "integer_distance",
+    "scorer": "exact_match",
     "default_params": {
         "depth": 3,
         "resolution": 512,

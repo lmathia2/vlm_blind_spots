@@ -14,8 +14,8 @@ TASK_CONFIG = {
     "task_name": "arrow_following",
     "prompt_template": None,  # filled dynamically per sample
     "prompt_template_v2": None,  # dynamic v2 prompt set in render()
-    "parser": "letter",
-    "scorer": "set_member",
+    "parser": "csv_letters",
+    "scorer": "set_match",
     "default_params": {
         "n_boxes": 5,
         "n_arrows": 5,
@@ -186,15 +186,15 @@ def render(
 
     prompt = (
         f"Starting at box {start_label}, follow the arrows. "
-        f"What is the last box you reach? "
-        f"Answer with just the letter in curly brackets, e.g., {{C}}."
+        f"Which boxes can you end at? If multiple paths exist, list all possible "
+        f"final boxes. Answer with just the letter(s) in curly brackets, e.g., {{C}} or {{C, E}}."
     )
 
     if prompt_variant == 2:
         prompt = (
             f"Follow the directed arrows starting from box {start_label}. "
-            f"Which box do you end up at? "
-            f"Answer with just the letter in curly brackets, e.g., {{C}}."
+            f"Which boxes can you end at? List all possible final boxes. "
+            f"Answer with just the letter(s) in curly brackets, e.g., {{C}} or {{C, E}}."
         )
 
     # --- Render with matplotlib ---

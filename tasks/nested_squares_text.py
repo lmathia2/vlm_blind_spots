@@ -13,7 +13,7 @@ TASK_CONFIG = {
     "prompt_template": "",  # filled dynamically
     "prompt_template_v2": "",
     "parser": "integer",
-    "scorer": "integer_distance",
+    "scorer": "exact_match",
     "default_params": {
         "depth": 3,
         "reduction_factor": 0.6,

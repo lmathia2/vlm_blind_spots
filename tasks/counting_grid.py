@@ -9,7 +9,7 @@ TASK_CONFIG = {
     "prompt_template": None,  # dynamic per question_type
     "prompt_template_v2": None,
     "parser": "row_col",  # default fallback; overridden per sample in metadata
-    "scorer": "row_col",
+    "scorer": "exact_match",
     "default_params": {
         "rows": 8,
         "cols": 8,
@@ -46,9 +46,9 @@ _PROMPTS = {
 }
 
 _PARSER_SCORER = {
-    "grid_size": ("row_col", "row_col"),
-    "total_cells": ("integer", "integer_distance"),
-    "merged_count": ("integer", "integer_distance"),
+    "grid_size": ("row_col", "exact_match"),
+    "total_cells": ("integer", "exact_match"),
+    "merged_count": ("integer", "exact_match"),
 }
 
 

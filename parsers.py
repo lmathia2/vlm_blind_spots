@@ -163,6 +163,11 @@ def parse_csv_words(response: str) -> Optional[str]:
         words = [w.strip() for w in inner.split(",") if w.strip()]
         if words:
             return ",".join(sorted(words, key=str.lower))
+        # No commas found — fall back to space-split if all tokens are capitalized
+        # (safe for current item pools which are all single capitalized words)
+        space_words = [w.strip() for w in inner.split() if w.strip()]
+        if space_words and all(w[0].isupper() for w in space_words):
+            return ",".join(sorted(space_words, key=str.lower))
     # Try comma-separated list in the response
     # Look for a line/section with comma-separated capitalized words
     m = re.search(r"(?:^|:)\s*([A-Z][a-z]+(?:\s*,\s*[A-Z][a-z]+)+)", response, re.MULTILINE)

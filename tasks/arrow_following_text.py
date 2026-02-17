@@ -11,8 +11,8 @@ TASK_CONFIG = {
     "task_name": "arrow_following_text",
     "prompt_template": "",
     "prompt_template_v2": "",
-    "parser": "letter",
-    "scorer": "set_member",
+    "parser": "csv_letters",
+    "scorer": "set_match",
     "default_params": {
         "n_boxes": 5,
         "n_arrows": 5,

@@ -28,7 +28,51 @@ TASK_CONFIG = {
 _SLICE_LABELS = ["Marketing", "Engineering", "Sales", "Operations", "HR",
                  "Finance", "Support", "R&D", "Legal", "Admin"]
 
+_MIN_GAP = 8  # minimum percentage-point gap between any two slices
+
 _call_counter = 0
+
+
+def _generate_slices(rng: Random, n_slices: int, max_attempts: int = 200) -> list[int]:
+    """Generate n_slices percentages summing to 100, with ≥ _MIN_GAP pp between any pair."""
+    for _ in range(max_attempts):
+        raw = [rng.randint(5, 40) for _ in range(n_slices)]
+        total = sum(raw)
+        percentages = [round(v / total * 100) for v in raw]
+        diff = 100 - sum(percentages)
+        percentages[0] += diff
+
+        # Check minimum gap between all pairs
+        ok = True
+        for i in range(len(percentages)):
+            for j in range(i + 1, len(percentages)):
+                if abs(percentages[i] - percentages[j]) < _MIN_GAP:
+                    ok = False
+                    break
+            if not ok:
+                break
+        if ok and all(p >= 3 for p in percentages):
+            return percentages
+
+    # Fallback: reduce gap requirement to 6
+    for _ in range(max_attempts):
+        raw = [rng.randint(5, 40) for _ in range(n_slices)]
+        total = sum(raw)
+        percentages = [round(v / total * 100) for v in raw]
+        diff = 100 - sum(percentages)
+        percentages[0] += diff
+        ok = True
+        for i in range(len(percentages)):
+            for j in range(i + 1, len(percentages)):
+                if abs(percentages[i] - percentages[j]) < 6:
+                    ok = False
+                    break
+            if not ok:
+                break
+        if ok and all(p >= 3 for p in percentages):
+            return percentages
+
+    return percentages  # last attempt, best-effort
 
 
 def render(
@@ -42,29 +86,25 @@ def render(
 
     labels = _SLICE_LABELS[:n_slices]
 
-    # Generate percentages that sum to 100, with minimum 5% each
-    raw = [rng.randint(5, 40) for _ in range(n_slices)]
-    total = sum(raw)
-    percentages = [round(v / total * 100) for v in raw]
-    # Fix rounding to sum to 100
-    diff = 100 - sum(percentages)
-    percentages[0] += diff
+    # Generate well-spaced percentages
+    percentages = _generate_slices(rng, n_slices)
 
     target_idx = rng.randint(0, n_slices - 1)
     correct_pct = percentages[target_idx]
 
-    # Generate distractors: other slice percentages + offsets, spaced ≥7% apart
+    # Distractors: prefer actual slice percentages (guaranteed well-spaced after _generate_slices)
     other_pcts = [p for i, p in enumerate(percentages) if i != target_idx]
     distractors = []
-    candidates = sorted(set(other_pcts), key=lambda x: abs(x - correct_pct))
 
-    for c in candidates:
+    # Use actual slice values first (already ≥ _MIN_GAP apart from each other and target)
+    rng.shuffle(other_pcts)
+    for c in other_pcts:
         if len(distractors) >= 3:
             break
         if all(abs(c - d) >= 7 for d in distractors) and abs(c - correct_pct) >= 7:
             distractors.append(c)
 
-    # Fill remaining with offsets
+    # Fill remaining with synthetic offsets only if needed
     for offset in [12, -12, 20, -20, 8, -8, 15, -15]:
         if len(distractors) >= 3:
             break
