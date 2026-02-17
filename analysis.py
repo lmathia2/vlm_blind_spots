@@ -335,7 +335,6 @@ def compute_bias(results_path: str | Path, task_name: str) -> dict:
 
 
 CLUTTER_TAX_PAIRS = [
-    ("line_intersection", "line_chart_crossing", "P4 Intersection Detection"),
     ("touching_circles", "form_checkboxes", "P5 Fine State Discrimination"),
     ("colored_paths", "arrow_following", "P2 Path Following"),
 ]
@@ -493,7 +492,6 @@ TASK_CLASSIFICATION = {
     # Perception + reasoning (see, then compute/follow/count)
     "counting_grid":      {"perception": "high",   "reasoning": "medium", "category": "counting"},
     "nested_squares":     {"perception": "high",   "reasoning": "low",    "category": "counting"},
-    "line_intersection":  {"perception": "high",   "reasoning": "high",   "category": "counting"},
     "line_chart_crossing": {"perception": "high",  "reasoning": "medium", "category": "counting"},
     "decision_flowchart": {"perception": "medium", "reasoning": "high",   "category": "graph_traversal"},
     "arrow_following":    {"perception": "medium", "reasoning": "medium", "category": "graph_traversal"},

@@ -52,7 +52,7 @@ Evaluation supports **automatic resume** — re-running skips completed samples.
 ├── parsers.py              # Response parsers (integer, mc4, csv_words, etc.)
 ├── scorers.py              # Scoring functions (exact_match, set_match, etc.)
 ├── analysis.py             # Diagnostics, classification taxonomy, plots
-├── tasks/                  # 35 image tasks + 35 text controls (auto-discovered)
+├── tasks/                  # 34 image tasks + 34 text controls (auto-discovered)
 │   ├── _text_control.py    # Shared utilities for text-only controls
 │   ├── counting_grid.py    # Example image task
 │   ├── counting_grid_text.py  # Matched text-only control
@@ -66,7 +66,7 @@ Evaluation supports **automatic resume** — re-running skips completed samples.
 
 ## Tasks
 
-35 synthetic image tasks across 7 categories, each with a matched text-only control (`*_text.py`):
+34 synthetic image tasks across 7 categories, each with a matched text-only control (`*_text.py`):
 
 | Category | Tasks |
 |----------|-------|
@@ -76,7 +76,7 @@ Evaluation supports **automatic resume** — re-running skips completed samples.
 | Table lookup | `color_coded_cells`, `merged_cell_read`, `realistic_table`, `table_cell_read` |
 | Chart reading | `bar_chart_value`, `grouped_bar`, `heatmap`, `line_chart_point`, `pie_chart`, `progress_bar`, `scatter_plot`, `stacked_bar` |
 | Chart association | `legend_association`, `line_chart_crossing`, `line_style` |
-| Spatial/graph | `arrow_following`, `colored_paths`, `counting_grid`, `decision_flowchart`, `edge_crossing`, `hierarchy_depth`, `line_intersection`, `nested_squares`, `touching_circles`, `venn_diagram` |
+| Spatial/graph | `arrow_following`, `colored_paths`, `counting_grid`, `decision_flowchart`, `edge_crossing`, `hierarchy_depth`, `nested_squares`, `touching_circles`, `venn_diagram` |
 
 Tasks are auto-discovered from `tasks/`. Each exports a `TASK_CONFIG` dict and a `render()` function.
 
@@ -101,9 +101,9 @@ For a text-only control, create `tasks/your_task_text.py` that calls the parent'
 
 ## Key Results (Haiku 4.5)
 
-- **82% mean image accuracy** vs **95% on text controls** (13-point perceptual gap)
-- **10/35 tasks** have perceptual blind spots (counting, degraded text, proportions)
-- **1/35 tasks** has a reasoning bottleneck (arrow following)
-- **24/35 tasks** work well at 95–100%
+- **84% mean image accuracy** vs **96% on text controls** (12-point perceptual gap)
+- **9/34 tasks** have perceptual blind spots (counting, degraded text, proportions)
+- **1/34 tasks** has a reasoning bottleneck (arrow following)
+- **24/34 tasks** work well at 95–100%
 
 See `report_haiku45/blind_spots_report.md` for the full analysis.

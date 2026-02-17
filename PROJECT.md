@@ -135,8 +135,6 @@ The loaders also need to set the correct `parser` and `scorer` fields for each t
 
 **counting_grid** — PIL ImageDraw. Draw black grid lines on white background. Params: `rows`, `cols`, `resolution`, `line_width`. Prompt asks for row and col count. Parser: `row_col`. Scorer: `row_col`. Sweep axes: rows [3,5,7,10,15], cols [3,5,7,10,15], line_width [1,2,3,5,10], resolution [256,512,768,1024].
 
-**line_intersection** — Matplotlib. Two piecewise-linear paths (blue, red) each with 3 control points on a grid. Compute ground truth intersections analytically using segment intersection math (adapt from BlindTest's `orientation()`/`lines_intersect()` functions). Params: `resolution`, `linewidth`, `grid_size`. Balance across 0/1/2 intersections. Prompt asks for intersection count. Parser: `integer`. Scorer: `integer_distance`. Sweep axes: linewidth [1,1.5,2,3,4,5,8], resolution [384,512,768,1024,1152].
-
 **touching_circles** — Matplotlib. Two filled circles with parameterized distance. Params: `distance` (fraction of 2×radius; negative=overlap, 0=tangent, positive=gap), `resolution`, `rotation` (horizontal/vertical/diagonal), `diameter_ratio`. Prompt: "Are the two circles touching each other? Answer Yes/No." Parser: `yes_no`. Scorer: `exact_match`. Sweep axes: distance [-0.25 to 0.25 in steps of 0.05], resolution [384,768,1152].
 
 **nested_squares** — Matplotlib. Recursively nested squares with random center offsets. Params: `depth` (2–5), `resolution`, `line_thickness`, `reduction_factor`. Prompt asks for total square count. Parser: `integer`. Scorer: `integer_distance`. Sweep: depth [2,3,4,5], line_thickness [1,2,3,5].
@@ -192,12 +190,12 @@ Implement this as a special task where `render()` returns a tiny placeholder ima
    scorers, cli, tasks/__init__.py, tasks/counting_grid.py
    Verify: generate → evaluate → analyze pipeline works
 3. BlindTest loaders: load existing images for                 (~40 min)
-   line_intersection, touching_circles, nested_squares,
+   touching_circles, nested_squares,
    counting_grid, circled_letter, counting_circles, subway_map
 4. Run baseline evaluation on loaded BlindTest images          (~30 min)
    ~150 images across all tasks. Identify worst 2–3 tasks.
 5. Build generators for worst 2 tasks (probably                (~60 min)
-   line_intersection + touching_circles). Run parameter sweeps.
+   touching_circles). Run parameter sweeps.
 6. Build 2–3 doc processing probes: table_cell_read,           (~90 min)
    line_chart_crossing, arrow_following. Run evaluations.
 7. Perception vs reasoning diagnostic on worst blind spot       (~20 min)
