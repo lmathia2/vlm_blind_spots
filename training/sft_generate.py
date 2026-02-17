@@ -7,6 +7,14 @@ Seed ranges (non-overlapping):
   SFT:  [0, 100K) — direct [0, 20K), intermediate [20K, 40K), tool_use [40K, 50K)
   RL:   [100K, 500K)
   Eval: [500K, 510K)
+
+Anti-shortcut randomization
+----------------------------
+After rendering, images are post-processed to prevent the model from
+inferring grid size from image dimensions or pixel spacing:
+- Random padding (0-30px per side, variable bg color)
+- Slight aspect-ratio stretch (up to 15%)
+- Background color variation (white, light gray, cream)
 """
 
 import base64
@@ -14,6 +22,8 @@ import json
 from io import BytesIO
 from pathlib import Path
 from random import Random
+
+from PIL import ImageOps
 
 from tasks.counting_grid import render as render_grid
 from training.cot_templates import (
@@ -46,6 +56,31 @@ _DEFAULT_COUNTS = {
     "tool_use": 1000,
 }
 
+# Background color palette for anti-shortcut randomization
+_BG_COLORS = [
+    (255, 255, 255),  # white
+    (240, 240, 240),  # light gray
+    (245, 245, 230),  # cream
+    (230, 240, 250),  # light blue-gray
+]
+
+# Pre-computed valid (rows, cols) pairs per strategy for uniform sampling
+_GRID_PAIRS_CACHE: dict[str, list[tuple[int, int]]] = {}
+
+
+def _get_grid_pairs(strategy: str, is_skip: bool = False) -> list[tuple[int, int]]:
+    """Return all valid (rows, cols) pairs for a strategy, cached."""
+    key = f"{strategy}{'_skip' if is_skip else ''}"
+    if key not in _GRID_PAIRS_CACHE:
+        if is_skip:
+            lo, hi = _GRID_RANGES["tool_use_skip"]
+        else:
+            lo, hi = _GRID_RANGES[strategy]
+        _GRID_PAIRS_CACHE[key] = [
+            (r, c) for r in range(lo, hi + 1) for c in range(lo, hi + 1)
+        ]
+    return _GRID_PAIRS_CACHE[key]
+
 # Prompt (same for all SFT samples — always grid_size question)
 _PROMPT = (
     "Count the number of rows and columns in this grid. "
@@ -54,14 +89,15 @@ _PROMPT = (
 
 
 def _sample_grid_params(rng: Random, strategy: str, is_skip: bool = False) -> dict:
-    """Sample grid rendering parameters for a given strategy."""
-    if is_skip:
-        lo, hi = _GRID_RANGES["tool_use_skip"]
-    else:
-        lo, hi = _GRID_RANGES[strategy]
+    """Sample grid rendering parameters with uniform (rows, cols) distribution.
 
-    rows = rng.randint(lo, hi)
-    cols = rng.randint(lo, hi)
+    Uses uniform sampling over all valid (rows, cols) pairs to ensure
+    every grid size appears with equal probability. Also samples
+    anti-shortcut randomization parameters (padding, bg_color, aspect stretch).
+    """
+    # Uniform sampling over all (rows, cols) pairs
+    pairs = _get_grid_pairs(strategy, is_skip)
+    rows, cols = rng.choice(pairs)
 
     # Resolution: larger for denser grids
     if max(rows, cols) > 15:
@@ -71,11 +107,23 @@ def _sample_grid_params(rng: Random, strategy: str, is_skip: bool = False) -> di
 
     line_width = rng.choice([1, 2, 3])
 
+    # Anti-shortcut randomization
+    padding = tuple(rng.randint(0, 30) for _ in range(4))  # top, right, bottom, left
+    bg_color = rng.choice(_BG_COLORS)
+    # Aspect stretch: up to 15% in width or height
+    aspect_stretch = (
+        1.0 + rng.uniform(-0.15, 0.15),  # width multiplier
+        1.0 + rng.uniform(-0.15, 0.15),  # height multiplier
+    )
+
     return {
         "rows": rows,
         "cols": cols,
         "resolution": resolution,
         "line_width": line_width,
+        "padding": padding,
+        "bg_color": bg_color,
+        "aspect_stretch": aspect_stretch,
     }
 
 
@@ -91,6 +139,31 @@ def _select_template(rng: Random, strategy: str, is_skip: bool = False) -> str:
         return rng.choice(TOOL_USE_COT_TEMPLATES)
     else:
         raise ValueError(f"Unknown strategy: {strategy}")
+
+
+def _apply_anti_shortcut(img, params: dict):
+    """Apply post-render randomization to prevent shortcut strategies.
+
+    Adds padding with a random background color and applies a slight
+    aspect-ratio stretch.  Keeps the renderer itself untouched.
+    """
+    padding = params["padding"]  # (top, right, bottom, left)
+    bg_color = params["bg_color"]
+
+    # Add padding
+    if any(p > 0 for p in padding):
+        # ImageOps.expand takes (left, top, right, bottom)
+        border = (padding[3], padding[0], padding[1], padding[2])
+        img = ImageOps.expand(img, border=border, fill=bg_color)
+
+    # Apply aspect stretch
+    w_mult, h_mult = params["aspect_stretch"]
+    new_w = max(1, round(img.width * w_mult))
+    new_h = max(1, round(img.height * h_mult))
+    if (new_w, new_h) != (img.width, img.height):
+        img = img.resize((new_w, new_h))
+
+    return img
 
 
 def _image_to_base64(img) -> str:
@@ -132,6 +205,9 @@ def generate_one_sample(seed: int, strategy: str, rng: Random) -> dict:
         seed=seed,
     )
 
+    # Apply anti-shortcut post-processing
+    img = _apply_anti_shortcut(img, params)
+
     # Select and fill template
     template = _select_template(rng, strategy, is_skip=is_skip)
 
@@ -160,6 +236,9 @@ def generate_one_sample(seed: int, strategy: str, rng: Random) -> dict:
             "strategy": strategy,
             "is_skip": is_skip,
             "include_self_correction": include_self_correction,
+            "padding": params["padding"],
+            "bg_color": params["bg_color"],
+            "aspect_stretch": params["aspect_stretch"],
         },
     }
 

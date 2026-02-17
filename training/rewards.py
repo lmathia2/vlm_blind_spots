@@ -4,6 +4,25 @@ Three reward functions, all with signature:
     (response_str, ground_truth_str, metadata_dict) -> float
 
 Ground truth is in "R,C" format (e.g. "8,6").
+
+Reward hardening notes
+----------------------
+The following risks are mitigated by code in this module:
+
+- **CoT camouflage**: ``_cot_answer_consistent`` checks that the CoT's own
+  arithmetic matches the final answer.  If the model writes "13 lines → 12
+  rows" but answers rows=13, the process bonus is zeroed out.
+- **Tool output fabrication**: ``_detect_fabrication_risk`` flags responses
+  that include code blocks without real execution markers (no ``output``
+  block, no image-processing imports).  Flagged responses receive a reduced
+  tool-use reward.
+
+Out-of-scope risks (documented for completeness):
+
+- **Capability generalization**: monitor with OOD visual extraction
+  benchmarks post-training.  Not addressable at the reward-function level.
+- **Training data leakage**: audit SFT templates before training, strip
+  image metadata.  Not addressable at the reward-function level.
 """
 
 import re
@@ -86,13 +105,74 @@ def _extract_line_row_patterns(cot: str) -> list[tuple[int, int]]:
     return pairs
 
 
+def _cot_answer_consistent(response: str, ground_truth: str) -> float:
+    """Check whether the CoT's own arithmetic matches the final answer.
+
+    Extracts (line_count, cell_count) pairs from the CoT and checks
+    the last horizontal/row pair's cell_count against the final answer's
+    row value, and the last vertical/column pair's cell_count against
+    the column value.
+
+    Returns 1.0 if consistent (or no signal), 0.0 if mismatch detected.
+    """
+    parsed = _parse_final_answer(response)
+    if parsed is None:
+        return 1.0  # no answer to check against
+
+    final_r, final_c = parsed.split(",")
+
+    pairs = _extract_line_row_patterns(response)
+    if not pairs:
+        return 1.0  # no CoT arithmetic to check
+
+    # Classify pairs by whether they reference rows or columns
+    row_pairs = []
+    col_pairs = []
+    for m in re.finditer(
+        r"(\d+)\s+(?:horizontal\s+)?lines?"
+        r"\s*(?:→|->|,\s*so|means?|make|gives?|creates?)\s*"
+        r"(\d+)\s+(rows?|columns?)",
+        response, re.IGNORECASE,
+    ):
+        val = int(m.group(2))
+        dim = m.group(3).lower()
+        if dim.startswith("row"):
+            row_pairs.append(val)
+        else:
+            col_pairs.append(val)
+
+    # Also check "N - 1 = M" patterns near "row" or "column" context
+    for m in re.finditer(r"(\d+)\s*-\s*1\s*=\s*(\d+)", response):
+        result = int(m.group(2))
+        # Check what's nearest after the match
+        after = response[m.end():m.end() + 60].lower()
+        row_pos = after.find("row")
+        col_pos = after.find("col")
+        if row_pos >= 0 and (col_pos < 0 or row_pos < col_pos):
+            row_pairs.append(result)
+        elif col_pos >= 0:
+            col_pairs.append(result)
+
+    # Check last pair for each dimension against final answer
+    if row_pairs and str(row_pairs[-1]) != final_r:
+        return 0.0
+    if col_pairs and str(col_pairs[-1]) != final_c:
+        return 0.0
+
+    return 1.0
+
+
 def process_reward(response: str, ground_truth: str, metadata: dict) -> float:
-    """Combined outcome + process reward.
+    """Combined outcome + process reward with CoT consistency check.
 
     Checks that the CoT correctly applies the N-1 rule:
     whenever "A lines → B rows" appears, B should equal A-1.
 
-    Combined: R = max(outcome, 0.8 * outcome + 0.2 * process_score)
+    Also checks CoT-answer consistency: the CoT's own subtraction
+    result must match the final answer.  If the CoT says "12 rows"
+    but the answer says rows=13, the process bonus is zeroed.
+
+    Combined: R = max(outcome, 0.8 * outcome + 0.2 * process_score * consistency)
     Correct answers are never penalized below 1.0.
     """
     outcome = outcome_reward(response, ground_truth, metadata)
@@ -106,7 +186,9 @@ def process_reward(response: str, ground_truth: str, metadata: dict) -> float:
     total_pairs = len(pairs)
     process_score = correct_pairs / total_pairs
 
-    combined = 0.8 * outcome + 0.2 * process_score
+    consistency = _cot_answer_consistent(response, ground_truth)
+
+    combined = 0.8 * outcome + 0.2 * process_score * consistency
     return max(outcome, combined)
 
 
@@ -148,9 +230,45 @@ def _tool_output_consistent(response: str, ground_truth: str) -> bool | None:
     return None
 
 
-def tool_use_reward(response: str, ground_truth: str, metadata: dict) -> float:
-    """Outcome + tool consistency reward.
+def _detect_fabrication_risk(response: str) -> bool:
+    """Heuristic check for likely fabricated tool output.
 
+    Flags a response as suspicious when:
+    - A Python code block is present but there is no ```output block
+      (model wrote code but "ran" it without execution markers).
+    - The code block contains no image-processing imports (numpy, PIL,
+      cv2) — suggesting decorative code rather than real analysis.
+
+    Returns True if fabrication is likely.
+    """
+    has_code = _detect_code_blocks(response)
+    if not has_code:
+        return False
+
+    # Check for output block
+    has_output = bool(re.search(r"```output", response, re.IGNORECASE))
+
+    # Check for image-processing imports
+    has_img_imports = bool(re.search(
+        r"(?:import|from)\s+(?:numpy|PIL|cv2|skimage)",
+        response, re.IGNORECASE,
+    ))
+
+    # Fabrication: code present but no output AND no real imports
+    if not has_output and not has_img_imports:
+        return True
+
+    # Weaker signal: code with no output block at all
+    if not has_output:
+        return True
+
+    return False
+
+
+def tool_use_reward(response: str, ground_truth: str, metadata: dict) -> float:
+    """Outcome + tool consistency reward with fabrication penalty.
+
+    If tool output appears fabricated: outcome * 0.7
     If tool is used but output is misinterpreted: outcome * 0.5
     If no tool used: pure outcome (appropriate for easy grids).
     """
@@ -160,6 +278,10 @@ def tool_use_reward(response: str, ground_truth: str, metadata: dict) -> float:
     if not has_code:
         # No tool use — pure outcome
         return outcome
+
+    # Check for fabricated tool output before checking consistency
+    if _detect_fabrication_risk(response):
+        return outcome * 0.7
 
     consistency = _tool_output_consistent(response, ground_truth)
 

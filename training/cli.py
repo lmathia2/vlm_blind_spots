@@ -141,6 +141,44 @@ def cmd_verify_reward(args):
         print("All rewards returned 1.0")
 
 
+def cmd_diagnose(args):
+    """Run reward hacking diagnostics on RL results."""
+    from training.diagnostics import run_all_diagnostics, print_diagnostic_report
+
+    results_path = Path(args.results)
+    if not results_path.exists():
+        print(f"File not found: {results_path}")
+        sys.exit(1)
+
+    episodes = []
+    with open(results_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            ep = json.loads(line)
+            # Normalize: accept both "response" and "chain_of_thought" + "answer"
+            if "response" not in ep:
+                cot = ep.get("chain_of_thought", "")
+                answer = ep.get("answer", "")
+                ep["response"] = cot + "\n\n" + answer
+            episodes.append(ep)
+
+    if args.n:
+        episodes = episodes[:args.n]
+
+    print(f"Loaded {len(episodes)} episodes from {results_path}")
+    report = run_all_diagnostics(episodes)
+    print_diagnostic_report(report)
+
+    if args.json:
+        output_path = Path(args.json)
+        with open(output_path, "w") as f:
+            # Avoid serialization issues with non-string keys
+            json.dump(report, f, indent=2, default=str)
+        print(f"\nJSON report saved to {output_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Training data generation and reward verification"
@@ -183,6 +221,24 @@ def main():
         help="Number of samples (default: all from file, or 10 generated)",
     )
     vr.set_defaults(func=cmd_verify_reward)
+
+    # diagnose
+    diag = subparsers.add_parser(
+        "diagnose", help="Run reward hacking diagnostics on RL results"
+    )
+    diag.add_argument(
+        "--results", required=True,
+        help="Path to JSONL file with RL episodes (response, ground_truth, metadata, reward)",
+    )
+    diag.add_argument(
+        "--n", type=int, default=None,
+        help="Limit to first N episodes",
+    )
+    diag.add_argument(
+        "--json", default=None,
+        help="Save JSON report to this path",
+    )
+    diag.set_defaults(func=cmd_diagnose)
 
     args = parser.parse_args()
     args.func(args)
