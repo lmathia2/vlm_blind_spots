@@ -118,13 +118,19 @@ def parse_exact_string(response: str) -> Optional[str]:
     """Extract an exact string answer from response.
 
     Tries structured formats first, then strips common preamble.
+    Strips paired LaTeX-style $...$ delimiters that some models wrap answers in.
     """
     if not response or not response.strip():
         return None
     # Try {answer} format (curly brackets)
     m = re.search(r"\{([^}]+)\}", response)
     if m:
-        return m.group(1).strip()
+        result = m.group(1).strip()
+        # Strip paired LaTeX $ delimiters: {$answer$} → answer
+        # Only strip when $ appears at BOTH ends (not single leading $ for currency)
+        if result.startswith("$") and result.endswith("$") and len(result) > 2:
+            result = result[1:-1].strip()
+        return result
     # Try "answer" or 'answer' (quoted)
     m = re.search(r'["\u201c]([^"\u201d]+)["\u201d]', response)
     if m:

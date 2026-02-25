@@ -126,6 +126,29 @@ class TestParseExactString:
     def test_whitespace_only(self):
         assert parse_exact_string("   ") is None
 
+    def test_latex_dollar_delimiters(self):
+        """Qwen3-VL wraps answers in {$...$} LaTeX-style."""
+        assert parse_exact_string("{$J. Smith$}") == "J. Smith"
+
+    def test_latex_single_dollar_preserved(self):
+        """Single leading $ is currency, not a LaTeX delimiter — keep it."""
+        assert parse_exact_string("{$1,085}") == "$1,085"
+
+    def test_latex_dollar_with_currency(self):
+        assert parse_exact_string("{$1,551}") == "$1,551"
+
+    def test_no_dollar_stripping_when_not_delimiter(self):
+        """Don't strip $ when it's part of a currency value like $50."""
+        assert parse_exact_string("{$50.00}") == "$50.00"
+
+    def test_paired_dollars_stripped(self):
+        """Paired $...$ are LaTeX delimiters and should be stripped."""
+        assert parse_exact_string("{$Gamma$}") == "Gamma"
+
+    def test_curly_normal_no_dollar(self):
+        """Normal curly brace extraction still works."""
+        assert parse_exact_string("{Gamma}") == "Gamma"
+
 
 class TestParseCsvWords:
     def test_curly_comma(self):
