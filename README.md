@@ -81,6 +81,7 @@ python cli.py analyze --results results/baseline.jsonl \
 | `decompose` | 2-3 per sample | Counting, hierarchy, spatial tasks |
 | `code_vision` | 2 per sample | Geometric/structured images |
 | `best_of_n_verify` | N+1 per sample | Combining noise reduction + verification |
+| `adaptive` | varies | Routes each task to its best strategy |
 
 ## Project Structure
 
