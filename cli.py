@@ -300,7 +300,8 @@ def main():
                      help="OpenAI-compatible API base URL (e.g. http://127.0.0.1:1234/v1)")
     ev.add_argument("--strategy", default=None,
                      choices=["baseline", "best_of_n", "crop_zoom", "verify",
-                              "best_of_n_verify", "decompose", "code_vision"],
+                              "best_of_n_verify", "decompose", "code_vision",
+                              "adaptive"],
                      help="Inference-time strategy (default: baseline single-pass)")
     ev.add_argument("--best-of-n", type=int, default=5,
                      help="Number of samples for best_of_n strategy (default: 5)")

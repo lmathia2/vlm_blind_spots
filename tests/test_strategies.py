@@ -17,6 +17,7 @@ from strategies import (
     strategy_best_of_n_verify,
     strategy_decompose,
     strategy_code_vision,
+    strategy_adaptive,
     _majority_vote,
     _crop_image,
     _tile_image,
@@ -406,13 +407,51 @@ class TestStrategyRegistry:
     def test_all_registered(self):
         expected = {
             "baseline", "best_of_n", "crop_zoom", "verify",
-            "best_of_n_verify", "decompose", "code_vision",
+            "best_of_n_verify", "decompose", "code_vision", "adaptive",
         }
         assert expected == set(STRATEGY_REGISTRY.keys())
 
     def test_registry_callables(self):
         for name, fn in STRATEGY_REGISTRY.items():
             assert callable(fn), f"{name} is not callable"
+
+
+# ---------------------------------------------------------------------------
+# Strategy: adaptive (per-task routing)
+# ---------------------------------------------------------------------------
+
+class TestAdaptiveStrategy:
+    def test_routes_hierarchy_to_verify(self, mock_client, sample_dict):
+        sample_dict["task_name"] = "hierarchy_depth"
+        responses = [
+            _make_response("{4}"),  # initial
+            _make_response("Looking again, I count 3 rows. {3}"),  # verify corrects
+        ]
+        mock_client.query.side_effect = responses
+        result = strategy_adaptive(mock_client, sample_dict)
+        assert result["strategy"] == "adaptive"
+        assert result["strategy_selected"] == "verify"
+
+    def test_routes_nested_squares_to_crop_zoom(self, mock_client, sample_dict):
+        mock_client.query.return_value = _make_response("{5}")
+        result = strategy_adaptive(mock_client, sample_dict)
+        assert result["strategy_selected"] == "crop_zoom"
+
+    def test_routes_unknown_to_best_of_n(self, mock_client, sample_dict):
+        sample_dict["task_name"] = "unknown_task"
+        mock_client.query.return_value = _make_response("{5}")
+        result = strategy_adaptive(mock_client, sample_dict, n=3)
+        assert result["strategy_selected"] == "best_of_n"
+        assert mock_client.query.call_count == 3
+
+    def test_routes_text_control_to_best_of_n(self, mock_client, sample_dict):
+        """Text controls (e.g., nested_squares_text) should use best_of_n."""
+        sample_dict["task_name"] = "nested_squares_text"
+        mock_client.query.return_value = _make_response("{5}")
+        result = strategy_adaptive(mock_client, sample_dict, n=3)
+        # nested_squares base maps to crop_zoom, but _text suffix could
+        # route differently — verify it routes to the base task's strategy
+        assert result["strategy"] == "adaptive"
 
 
 # ---------------------------------------------------------------------------

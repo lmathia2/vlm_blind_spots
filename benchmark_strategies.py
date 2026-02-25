@@ -44,6 +44,7 @@ ALL_STRATEGIES = [
     "decompose",
     "code_vision",
     "best_of_n_verify",
+    "adaptive",
 ]
 
 DEFAULT_SAMPLES = 20  # Per task for benchmarking

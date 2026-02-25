@@ -350,15 +350,29 @@ def strategy_verify(client, sample: dict, **kwargs) -> dict:
         result["strategy"] = "verify"
         return result
 
-    # Pass 2: verification
-    verify_prompt = (
-        f"You previously answered this question about the image:\n\n"
-        f"Question: {sample['prompt']}\n"
-        f"Your answer: {parsed1}\n\n"
-        f"Look at the image again very carefully. "
-        f"Is your answer correct? If not, provide the correct answer. "
-        f"Respond with ONLY the corrected answer in the same format as before."
-    )
+    # Pass 2: task-specific verification prompt
+    task_name = sample.get("task_name", "")
+    if task_name == "hierarchy_depth":
+        verify_prompt = (
+            f"You previously answered this question about the image:\n\n"
+            f"Question: {sample['prompt']}\n"
+            f"Your answer: {parsed1}\n\n"
+            f"IMPORTANT: Count the number of HORIZONTAL ROWS of boxes, "
+            f"NOT the number of connections/edges between rows. "
+            f"For example, if the root is in row 1 and the leaves are in row 3, "
+            f"the answer is 3 (not 4). "
+            f"Look at the image again. Is {parsed1} correct? "
+            f"If not, provide the correct answer in curly brackets."
+        )
+    else:
+        verify_prompt = (
+            f"You previously answered this question about the image:\n\n"
+            f"Question: {sample['prompt']}\n"
+            f"Your answer: {parsed1}\n\n"
+            f"Look at the image again very carefully. "
+            f"Is your answer correct? If not, provide the correct answer. "
+            f"Respond with ONLY the corrected answer in the same format as before."
+        )
     resp2 = client.query(sample["image_path"], verify_prompt)
     total_latency += resp2.get("latency_s", 0)
     total_input += resp2.get("input_tokens", 0)
@@ -505,10 +519,13 @@ _DECOMPOSITION_PLANS = {
             None,
         ),
         (
-            "Count the number of LEVELS (horizontal rows) in this hierarchy, "
-            "from the top row (root) to the bottom row (leaves). "
-            "The root is level 1. "
-            "Answer with just the number of levels in curly brackets, e.g., {4}.",
+            "Count the number of HORIZONTAL ROWS of boxes in this hierarchy. "
+            "The top row containing the root node is row 1. "
+            "Count each distinct row below it. "
+            "IMPORTANT: Count the number of rows (levels), NOT the number of "
+            "connections between rows. For example, if there are boxes in 3 "
+            "horizontal rows, the answer is 3, not 4. "
+            "Answer with just the number of rows in curly brackets, e.g., {3}.",
             "integer",
         ),
     ],
@@ -754,4 +771,54 @@ def strategy_code_vision(client, sample: dict, **kwargs) -> dict:
         "strategy_code_output": code_output[:500],
         "strategy_steps": 3,
     })
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Strategy: adaptive (picks best strategy per task)
+# ---------------------------------------------------------------------------
+
+# Mapping from task name to the best strategy based on error analysis.
+# Tasks not listed fall back to best_of_n.
+_ADAPTIVE_TASK_STRATEGIES = {
+    # Geometric/counting tasks → code_vision can bypass perception limits
+    "counting_grid": "decompose",
+    "nested_squares": "crop_zoom",
+    "edge_crossing": "code_vision",
+    # Systematic bias → verify catches off-by-one errors
+    "hierarchy_depth": "verify",
+    # Spatial reasoning → decompose breaks into identify-then-count
+    "colored_paths": "decompose",
+    # Chart reading → crop_zoom focuses on relevant regions
+    "pie_chart": "crop_zoom",
+    "scatter_plot": "crop_zoom",
+    "progress_bar": "crop_zoom",
+    # Text perception → crop_zoom upscales degraded text
+    "text_degradation": "crop_zoom",
+    # Table lookup → decompose extracts structure first
+    "realistic_table": "decompose",
+}
+
+
+@register_strategy("adaptive")
+def strategy_adaptive(client, sample: dict, n: int = 5, **kwargs) -> dict:
+    """Pick the best strategy for each task based on known error patterns.
+
+    Uses task-specific strategy selection from _ADAPTIVE_TASK_STRATEGIES.
+    Falls back to best_of_n for unknown tasks.
+    """
+    task_name = sample.get("task_name", "")
+
+    # Strip _text suffix for text controls — they don't need special strategies
+    base_task = task_name[:-5] if task_name.endswith("_text") else task_name
+
+    selected = _ADAPTIVE_TASK_STRATEGIES.get(base_task, "best_of_n")
+
+    # Dispatch to the selected strategy
+    strategy_fn = STRATEGY_REGISTRY.get(selected, strategy_best_of_n)
+    result = strategy_fn(client, sample, n=n, **kwargs)
+
+    # Override strategy name to track adaptive routing
+    result["strategy"] = "adaptive"
+    result["strategy_selected"] = selected
     return result

@@ -38,6 +38,13 @@ class TestParseInteger:
     def test_no_number(self):
         assert parse_integer("no numbers here") is None
 
+    def test_latex_dollar_delimiters(self):
+        """Qwen3-VL sometimes wraps in {$N$}."""
+        assert parse_integer("{$6$}") == "6"
+
+    def test_latex_single_dollar(self):
+        assert parse_integer("{$42}") == "42"
+
 
 class TestParseYesNo:
     def test_yes(self):
@@ -90,6 +97,10 @@ class TestParseRowCol:
 class TestParseMc4:
     def test_curly(self):
         assert parse_mc4("The answer is {A}") == "A"
+
+    def test_latex_dollar_curly(self):
+        """Qwen3-VL may wrap in {$A$}."""
+        assert parse_mc4("{$B$}") == "B"
 
     def test_paren(self):
         assert parse_mc4("I choose (B)") == "B"

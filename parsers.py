@@ -19,8 +19,8 @@ def register_parser(name: str):
 @register_parser("integer")
 def parse_integer(response: str) -> Optional[str]:
     """Extract an integer from response. Handles {N}, plain numbers, or spelled out."""
-    # Try {N} format first
-    m = re.search(r"\{(\d+)\}", response)
+    # Try {N} format first (including LaTeX: {$N$})
+    m = re.search(r"\{\$?(\d+)\$?\}", response)
     if m:
         return m.group(1)
     # Try plain number (last number in response as fallback)
@@ -88,8 +88,8 @@ def parse_row_col(response: str) -> Optional[str]:
 @register_parser("mc4")
 def parse_mc4(response: str) -> Optional[str]:
     """Extract a multiple-choice letter A/B/C/D from response."""
-    # Try {A} format
-    m = re.search(r"\{([A-Da-d])\}", response)
+    # Try {A} or {$A$} format (LaTeX-style)
+    m = re.search(r"\{\$?([A-Da-d])\$?\}", response)
     if m:
         return m.group(1).upper()
     # Try (A) format
