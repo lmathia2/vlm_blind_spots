@@ -7,7 +7,7 @@ import sys
 import uuid
 from pathlib import Path
 
-from config import DATA_DIR, RESULTS_DIR, MODEL
+from config import DATA_DIR, RESULTS_DIR, MODEL, API_BASE
 
 
 def cmd_generate(args):
@@ -202,8 +202,18 @@ def cmd_evaluate(args):
 
     model = args.model or MODEL
     reasoning = not getattr(args, "no_reasoning", False)
+    api_base = getattr(args, "api_base", None) or API_BASE
+
+    # Strategy setup
+    strategy = getattr(args, "strategy", None)
+    strategy_kwargs = {}
+    if strategy in ("best_of_n", "best_of_n_verify"):
+        strategy_kwargs["n"] = getattr(args, "best_of_n", 5)
+
     evaluate_manifest(manifest_path, results_path, model=model,
-                      max_workers=args.workers, reasoning=reasoning)
+                      max_workers=args.workers, reasoning=reasoning,
+                      api_base=api_base, strategy=strategy,
+                      strategy_kwargs=strategy_kwargs)
 
 
 def cmd_analyze(args):
@@ -240,8 +250,9 @@ def cmd_baseline(args):
 
     results_path = RESULTS_DIR / "baseline" / "results.jsonl"
     model = args.model or MODEL
+    api_base = getattr(args, "api_base", None) or API_BASE
     evaluate_manifest(manifest_path, results_path, model=model,
-                      max_workers=args.workers)
+                      max_workers=args.workers, api_base=api_base)
 
     from analysis import print_summary
     print_summary(results_path)
@@ -276,6 +287,14 @@ def main():
     ev.add_argument("--workers", type=int, default=None, help="Max parallel workers")
     ev.add_argument("--no-reasoning", action="store_true",
                      help="Disable extended thinking (reasoning mode, enabled by default)")
+    ev.add_argument("--api-base", default=None,
+                     help="OpenAI-compatible API base URL (e.g. http://127.0.0.1:1234/v1)")
+    ev.add_argument("--strategy", default=None,
+                     choices=["baseline", "best_of_n", "crop_zoom", "verify",
+                              "best_of_n_verify"],
+                     help="Inference-time strategy (default: baseline single-pass)")
+    ev.add_argument("--best-of-n", type=int, default=5,
+                     help="Number of samples for best_of_n strategy (default: 5)")
     ev.set_defaults(func=cmd_evaluate)
 
     # analyze
@@ -292,6 +311,8 @@ def main():
     bl = subparsers.add_parser("baseline", help="Run baseline evaluation")
     bl.add_argument("--model", default=None, help="Model override")
     bl.add_argument("--workers", type=int, default=None, help="Max parallel workers")
+    bl.add_argument("--api-base", default=None,
+                     help="OpenAI-compatible API base URL (e.g. http://127.0.0.1:1234/v1)")
     bl.set_defaults(func=cmd_baseline)
 
     args = parser.parse_args()
