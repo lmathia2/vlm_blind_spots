@@ -40,15 +40,55 @@ Evaluation supports **automatic resume** — re-running skips completed samples.
 | `evaluate` | `--model MODEL` | Override model (default: `claude-haiku-4-5-20251001`) |
 | `evaluate` | `--output PATH` | Custom results path |
 | `evaluate` | `--workers N` | Parallel workers (default: 10) |
+| `evaluate` | `--api-base URL` | OpenAI-compatible API base (e.g., `http://127.0.0.1:1234/v1`) |
+| `evaluate` | `--strategy NAME` | Inference-time strategy (see below) |
+| `evaluate` | `--best-of-n N` | Samples for best_of_n strategy (default: 5) |
 | `analyze` | `--diagnostic` | Print perception vs reasoning diagnostic table |
+| `analyze` | `--compare PATH` | Compare baseline vs strategy results side-by-side |
 | `analyze` | `--plot` | Generate accuracy plots |
+
+### Inference-Time Strategies
+
+Strategies improve accuracy without retraining by using additional inference-time compute:
+
+```bash
+# Majority voting: sample 5 responses, take consensus
+python cli.py evaluate --manifest data/combined/manifest.jsonl \
+    --strategy best_of_n --best-of-n 5
+
+# Crop-zoom: tile/crop image regions, reask, aggregate
+python cli.py evaluate --manifest data/combined/manifest.jsonl \
+    --strategy crop_zoom
+
+# Structured decomposition: break task into sub-questions
+python cli.py evaluate --manifest data/combined/manifest.jsonl \
+    --strategy decompose
+
+# Code-augmented vision: model writes PIL/numpy code to analyze image
+python cli.py evaluate --manifest data/combined/manifest.jsonl \
+    --strategy code_vision
+
+# Compare baseline vs strategy results
+python cli.py analyze --results results/baseline.jsonl \
+    --compare results/strategy.jsonl
+```
+
+| Strategy | API Calls | Best For |
+|----------|-----------|----------|
+| `best_of_n` | N per sample | All tasks (noise reduction) |
+| `crop_zoom` | 2-5 per sample | Counting, nested shapes, text |
+| `verify` | 2 per sample | Systematic bias correction |
+| `decompose` | 2-3 per sample | Counting, hierarchy, spatial tasks |
+| `code_vision` | 2 per sample | Geometric/structured images |
+| `best_of_n_verify` | N+1 per sample | Combining noise reduction + verification |
 
 ## Project Structure
 
 ```
 ├── cli.py                  # CLI entry point: generate, evaluate, analyze
 ├── config.py               # Model, paths, parallelism settings
-├── harness.py              # VisionClient + parallel eval with resume
+├── harness.py              # VisionClient + OpenAIVisionClient + parallel eval
+├── strategies.py           # Inference-time strategies (best_of_n, crop_zoom, etc.)
 ├── parsers.py              # Response parsers (integer, mc4, csv_words, etc.)
 ├── scorers.py              # Scoring functions (exact_match, set_match, etc.)
 ├── analysis.py             # Diagnostics, classification taxonomy, plots
