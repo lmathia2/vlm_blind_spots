@@ -9,6 +9,9 @@ TEMPERATURE = 0.0
 MAX_TOKENS = 512
 THINKING_BUDGET = 4096  # token budget for extended thinking
 
+# API backend (None = Anthropic; set to e.g. "http://127.0.0.1:1234/v1" for OpenAI-compat)
+API_BASE = os.environ.get("VLM_API_BASE", None)
+
 # Parallelism
 MAX_WORKERS = int(os.environ.get("VLM_MAX_WORKERS", "10"))
 

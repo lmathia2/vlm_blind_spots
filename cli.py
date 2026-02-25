@@ -225,6 +225,15 @@ def cmd_analyze(args):
         print(f"Results not found: {results_path}")
         sys.exit(1)
 
+    if args.compare:
+        from analysis import print_strategy_comparison
+        compare_path = Path(args.compare)
+        if not compare_path.exists():
+            print(f"Comparison results not found: {compare_path}")
+            sys.exit(1)
+        print_strategy_comparison(results_path, compare_path)
+        return
+
     print_summary(results_path)
 
     if args.diagnostic:
@@ -291,7 +300,7 @@ def main():
                      help="OpenAI-compatible API base URL (e.g. http://127.0.0.1:1234/v1)")
     ev.add_argument("--strategy", default=None,
                      choices=["baseline", "best_of_n", "crop_zoom", "verify",
-                              "best_of_n_verify"],
+                              "best_of_n_verify", "decompose", "code_vision"],
                      help="Inference-time strategy (default: baseline single-pass)")
     ev.add_argument("--best-of-n", type=int, default=5,
                      help="Number of samples for best_of_n strategy (default: 5)")
@@ -300,6 +309,8 @@ def main():
     # analyze
     an = subparsers.add_parser("analyze", help="Analyze results")
     an.add_argument("--results", required=True, help="Path to results JSONL")
+    an.add_argument("--compare", default=None,
+                     help="Path to strategy results JSONL to compare against --results (baseline)")
     an.add_argument("--plot", action="store_true", help="Generate plots")
     an.add_argument("--diagnostic", action="store_true",
                      help="Print perception vs reasoning diagnostic with all task pairs")

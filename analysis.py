@@ -144,6 +144,88 @@ def _print_comparison_summary(df: pd.DataFrame):
     print(f"\n{'TOTAL':<25} {total_no_n:>4} {acc_no_total:>12.1%} {total_yes_n:>4} {acc_yes_total:>12.1%} {delta_total:>+7.1%}")
 
 
+def print_strategy_comparison(baseline_path: str | Path, strategy_path: str | Path):
+    """Compare per-task accuracy between baseline and strategy results.
+
+    Prints a side-by-side table with accuracy deltas, highlighting improvements
+    and regressions. Only compares image tasks (excludes *_text controls).
+    """
+    baseline = load_results(baseline_path)
+    strategy = load_results(strategy_path)
+    if not baseline or not strategy:
+        print("Need both baseline and strategy results for comparison.")
+        return
+
+    df_base = pd.DataFrame(baseline)
+    df_strat = pd.DataFrame(strategy)
+
+    # Detect strategy name from results
+    strat_name = "strategy"
+    if "strategy" in df_strat.columns:
+        names = df_strat["strategy"].dropna().unique()
+        if len(names) == 1:
+            strat_name = names[0]
+
+    # Get tasks present in both
+    base_tasks = set(df_base["task_name"].unique())
+    strat_tasks = set(df_strat["task_name"].unique())
+    common_tasks = sorted(base_tasks & strat_tasks)
+
+    # Filter to image tasks only (exclude _text controls)
+    image_tasks = [t for t in common_tasks if not t.endswith("_text")]
+
+    if not image_tasks:
+        print("No common image tasks found between baseline and strategy results.")
+        return
+
+    print(f"\n{'Task':<25} {'N':>4} {'Baseline':>10} {'N':>4} {strat_name:>15} {'Delta':>8} {'Status'}")
+    print("-" * 80)
+
+    total_base_n, total_base_c = 0, 0
+    total_strat_n, total_strat_c = 0, 0
+    improved = 0
+    regressed = 0
+
+    for task in image_tasks:
+        bg = df_base[df_base["task_name"] == task]
+        sg = df_strat[df_strat["task_name"] == task]
+
+        n_b = len(bg)
+        c_b = int(bg["correct"].sum()) if n_b > 0 else 0
+        acc_b = c_b / n_b if n_b > 0 else 0
+
+        n_s = len(sg)
+        c_s = int(sg["correct"].sum()) if n_s > 0 else 0
+        acc_s = c_s / n_s if n_s > 0 else 0
+
+        total_base_n += n_b
+        total_base_c += c_b
+        total_strat_n += n_s
+        total_strat_c += c_s
+
+        delta = acc_s - acc_b
+        if delta > 0.005:
+            status = "\033[32m+IMPROVED\033[0m"
+            improved += 1
+        elif delta < -0.005:
+            status = "\033[31m-REGRESSED\033[0m"
+            regressed += 1
+        else:
+            status = "  same"
+
+        delta_str = f"{delta:+.1%}"
+        print(f"{task:<25} {n_b:>4} {acc_b:>9.1%} {n_s:>4} {acc_s:>14.1%} {delta_str:>8} {status}")
+
+    acc_b_total = total_base_c / total_base_n if total_base_n > 0 else 0
+    acc_s_total = total_strat_c / total_strat_n if total_strat_n > 0 else 0
+    delta_total = acc_s_total - acc_b_total
+
+    print(f"\n{'TOTAL':<25} {total_base_n:>4} {acc_b_total:>9.1%} "
+          f"{total_strat_n:>4} {acc_s_total:>14.1%} {delta_total:>+7.1%}")
+    print(f"\nSummary: {improved} improved, {regressed} regressed, "
+          f"{len(image_tasks) - improved - regressed} unchanged")
+
+
 def generate_all_plots(results_path: str | Path):
     """Generate all analysis plots for a results file."""
     import matplotlib

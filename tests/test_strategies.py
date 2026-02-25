@@ -15,11 +15,14 @@ from strategies import (
     strategy_crop_zoom,
     strategy_verify,
     strategy_best_of_n_verify,
+    strategy_decompose,
+    strategy_code_vision,
     _majority_vote,
     _crop_image,
     _tile_image,
     _parse_answer,
     _save_temp_image,
+    _run_sandboxed_code,
 )
 
 
@@ -401,9 +404,173 @@ class TestBestOfNVerifyStrategy:
 
 class TestStrategyRegistry:
     def test_all_registered(self):
-        expected = {"baseline", "best_of_n", "crop_zoom", "verify", "best_of_n_verify"}
+        expected = {
+            "baseline", "best_of_n", "crop_zoom", "verify",
+            "best_of_n_verify", "decompose", "code_vision",
+        }
         assert expected == set(STRATEGY_REGISTRY.keys())
 
     def test_registry_callables(self):
         for name, fn in STRATEGY_REGISTRY.items():
             assert callable(fn), f"{name} is not callable"
+
+
+# ---------------------------------------------------------------------------
+# Strategy: decompose (structured decomposition)
+# ---------------------------------------------------------------------------
+
+class TestDecomposeStrategy:
+    def test_nested_squares_decomposition(self, mock_client, sample_dict):
+        """nested_squares has a 2-step plan: describe then count."""
+        responses = [
+            _make_response("Square 1: outermost. Square 2: inner. "
+                          "Square 3: smaller. Square 4: tiny. Square 5: smallest"),
+            _make_response("{5}"),
+            _make_response("{5}"),  # final answer
+        ]
+        mock_client.query.side_effect = responses
+        result = strategy_decompose(mock_client, sample_dict)
+        assert result["strategy"] == "decompose"
+        assert result["parsed_answer"] == "5"
+        # 2 sub-questions + 1 final = 3 calls
+        assert mock_client.query.call_count == 3
+
+    def test_counting_grid_row_col_assembly(self, mock_client, sample_dict):
+        """counting_grid with row_col parser should assemble from sub-counts."""
+        sample_dict["task_name"] = "counting_grid"
+        sample_dict["parser"] = "row_col"
+        sample_dict["ground_truth"] = "4,5"
+        responses = [
+            _make_response("{5}"),  # 5 horizontal lines = 4 rows
+            _make_response("{6}"),  # 6 vertical lines = 5 cols
+            _make_response("rows=4 columns=5"),  # final answer
+        ]
+        mock_client.query.side_effect = responses
+        result = strategy_decompose(mock_client, sample_dict)
+        assert result["parsed_answer"] == "4,5"
+        # 2 sub-questions + 1 final = 3 calls
+        assert mock_client.query.call_count == 3
+
+    def test_counting_grid_fallback_to_decomposed(self, mock_client, sample_dict):
+        """When final parse fails, use decomposed row/col counts."""
+        sample_dict["task_name"] = "counting_grid"
+        sample_dict["parser"] = "row_col"
+        sample_dict["ground_truth"] = "4,5"
+        responses = [
+            _make_response("{5}"),  # 5 horizontal lines
+            _make_response("{6}"),  # 6 vertical lines
+            _make_response("I see a grid with some rows and columns"),  # unparseable
+        ]
+        mock_client.query.side_effect = responses
+        result = strategy_decompose(mock_client, sample_dict)
+        # Should fall back to decomposed: 5-1=4 rows, 6-1=5 cols
+        assert result["parsed_answer"] == "4,5"
+
+    def test_unknown_task_generic_decomposition(self, mock_client, sample_dict):
+        sample_dict["task_name"] = "unknown_task"
+        responses = [
+            _make_response("I see a white image with nothing on it"),
+            _make_response("{0}"),
+        ]
+        mock_client.query.side_effect = responses
+        result = strategy_decompose(mock_client, sample_dict)
+        assert result["strategy"] == "decompose"
+        # 1 generic sub-question + 1 final = 2 calls
+        assert mock_client.query.call_count == 2
+
+    def test_hierarchy_depth(self, mock_client, sample_dict):
+        sample_dict["task_name"] = "hierarchy_depth"
+        responses = [
+            _make_response("Root: CEO -> CTO -> VP Eng -> Dir A"),
+            _make_response("{4}"),
+            _make_response("{4}"),
+        ]
+        mock_client.query.side_effect = responses
+        result = strategy_decompose(mock_client, sample_dict)
+        assert result["parsed_answer"] == "4"
+
+    def test_sub_responses_recorded(self, mock_client, sample_dict):
+        responses = [
+            _make_response("I see nested squares"),
+            _make_response("{5}"),
+            _make_response("{5}"),
+        ]
+        mock_client.query.side_effect = responses
+        result = strategy_decompose(mock_client, sample_dict)
+        assert "strategy_sub_responses" in result
+        assert len(result["strategy_sub_responses"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# Strategy: code_vision (sandboxed Python REPL)
+# ---------------------------------------------------------------------------
+
+class TestRunSandboxedCode:
+    def test_simple_print(self):
+        output = _run_sandboxed_code("print('hello')", "/dev/null")
+        assert output == "hello"
+
+    def test_pil_import(self, sample_image):
+        code = "from PIL import Image; img = Image.open(IMAGE_PATH); print(img.size)"
+        output = _run_sandboxed_code(code, sample_image)
+        assert "(512, 512)" in output
+
+    def test_error_captured(self):
+        output = _run_sandboxed_code("raise ValueError('test error')", "/dev/null")
+        assert "ERROR" in output
+        assert "test error" in output
+
+    def test_timeout(self):
+        output = _run_sandboxed_code("import time; time.sleep(100)", "/dev/null", timeout=1)
+        assert "ERROR" in output
+        assert "timeout" in output
+
+    def test_no_output(self):
+        output = _run_sandboxed_code("x = 42", "/dev/null")
+        assert output == "NO OUTPUT"
+
+
+class TestCodeVisionStrategy:
+    def test_basic_flow(self, mock_client, sample_dict):
+        responses = [
+            # Step 1: model writes code
+            _make_response("```python\nprint('5 squares found')\n```"),
+            # Step 2: model interprets output
+            _make_response("{5}"),
+        ]
+        mock_client.query.side_effect = responses
+        result = strategy_code_vision(mock_client, sample_dict)
+        assert result["strategy"] == "code_vision"
+        assert result["parsed_answer"] == "5"
+        assert mock_client.query.call_count == 2
+
+    def test_code_without_fences(self, mock_client, sample_dict):
+        """Model might not use code fences."""
+        responses = [
+            _make_response("print('5 squares found')"),
+            _make_response("{5}"),
+        ]
+        mock_client.query.side_effect = responses
+        result = strategy_code_vision(mock_client, sample_dict)
+        assert result["parsed_answer"] == "5"
+
+    def test_records_code_and_output(self, mock_client, sample_dict):
+        responses = [
+            _make_response("```python\nprint('analysis')\n```"),
+            _make_response("{5}"),
+        ]
+        mock_client.query.side_effect = responses
+        result = strategy_code_vision(mock_client, sample_dict)
+        assert "strategy_code" in result
+        assert "strategy_code_output" in result
+        assert result["strategy_steps"] == 3
+
+    def test_token_accumulation(self, mock_client, sample_dict):
+        responses = [
+            _make_response("```python\nprint('ok')\n```", latency=1.0),
+            _make_response("{5}", latency=0.5),
+        ]
+        mock_client.query.side_effect = responses
+        result = strategy_code_vision(mock_client, sample_dict)
+        assert result["input_tokens"] == 200
+        assert result["latency_s"] == 1.5

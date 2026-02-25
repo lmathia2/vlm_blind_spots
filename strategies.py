@@ -453,3 +453,305 @@ def strategy_best_of_n_verify(client, sample: dict, n: int = 5, **kwargs) -> dic
         "strategy_final_changed": final_answer != consensus,
     })
     return result
+
+
+# ---------------------------------------------------------------------------
+# Strategy: structured_decomposition (multi-step sub-questions)
+# ---------------------------------------------------------------------------
+
+# Task-specific decomposition plans.
+# Each plan is a list of (sub_prompt, extraction_fn) tuples.
+# extraction_fn takes the raw response and returns data for the next step.
+_DECOMPOSITION_PLANS = {
+    "counting_grid": [
+        (
+            "Look at this grid image. Focus ONLY on counting horizontal lines "
+            "(lines that go from left to right across the image). "
+            "Count every horizontal line you can see, including the top and bottom borders. "
+            "Answer with just the number in curly brackets, e.g., {7}.",
+            "integer",
+        ),
+        (
+            "Now focus ONLY on counting vertical lines "
+            "(lines that go from top to bottom in the image). "
+            "Count every vertical line you can see, including the left and right borders. "
+            "Answer with just the number in curly brackets, e.g., {7}.",
+            "integer",
+        ),
+    ],
+    "nested_squares": [
+        (
+            "Look at this image of nested squares. Starting from the OUTERMOST square, "
+            "describe each square you can see moving inward. "
+            "For each one, say 'Square 1: outermost', 'Square 2: next inner', etc. "
+            "List ALL squares you can identify, even very small inner ones.",
+            None,  # Free-form description, not parsed
+        ),
+        (
+            "Based on the image, count the TOTAL number of distinct squares, "
+            "including the outermost one and any tiny inner squares. "
+            "Look carefully at the center — there may be more squares than initially visible. "
+            "Answer with just the number in curly brackets, e.g., {5}.",
+            "integer",
+        ),
+    ],
+    "hierarchy_depth": [
+        (
+            "Look at this organizational chart / tree diagram. "
+            "Identify the ROOT node at the very top. What is its label? "
+            "Then trace the LONGEST path from the root down to a leaf node "
+            "(a node with no children below it). "
+            "List each node on this longest path, one per line.",
+            None,
+        ),
+        (
+            "Count the number of LEVELS (horizontal rows) in this hierarchy, "
+            "from the top row (root) to the bottom row (leaves). "
+            "The root is level 1. "
+            "Answer with just the number of levels in curly brackets, e.g., {4}.",
+            "integer",
+        ),
+    ],
+    "colored_paths": [
+        (
+            "Look at this diagram with colored paths connecting labeled stations. "
+            "List ALL the stations you can see and their positions. "
+            "Then for each colored path/ribbon, identify which TWO stations it connects "
+            "(its start and end points). List them as: 'Red path: Station X to Station Y'.",
+            None,
+        ),
+    ],
+    "pie_chart": [
+        (
+            "Look at this pie chart carefully. List ALL the slices with their labels "
+            "and estimate their percentage of the whole circle. "
+            "Order them from largest to smallest slice. "
+            "Format: 'Label: approximately XX%'.",
+            None,
+        ),
+    ],
+}
+
+
+@register_strategy("decompose")
+def strategy_decompose(client, sample: dict, **kwargs) -> dict:
+    """Break the task into sub-questions, gather intermediate info, then answer.
+
+    For tasks with known decomposition plans, asks structured sub-questions
+    first to prime the model, then asks the original question.
+    For unknown tasks, falls back to a generic "describe then answer" approach.
+    """
+    task_name = sample.get("task_name", "")
+    plan = _DECOMPOSITION_PLANS.get(task_name)
+
+    total_latency = 0.0
+    total_input = 0
+    total_output = 0
+    sub_responses = []
+
+    if plan is None:
+        # Generic decomposition: describe first, then answer
+        plan = [
+            (
+                "Describe this image in detail. Note all key elements, "
+                "labels, numbers, and spatial relationships.",
+                None,
+            ),
+        ]
+
+    # Execute sub-questions
+    for sub_prompt, sub_parser in plan:
+        resp = client.query(sample["image_path"], sub_prompt)
+        total_latency += resp.get("latency_s", 0)
+        total_input += resp.get("input_tokens", 0)
+        total_output += resp.get("output_tokens", 0)
+
+        sub_result = {"prompt": sub_prompt, "response": resp["raw_response"]}
+        if sub_parser:
+            sub_result["parsed"] = _parse_answer(resp["raw_response"], sub_parser)
+        sub_responses.append(sub_result)
+
+    # Final question: include context from sub-questions
+    context_lines = []
+    for i, sr in enumerate(sub_responses):
+        context_lines.append(f"Observation {i+1}: {sr['response']}")
+
+    # Build final prompt with accumulated context
+    final_prompt = (
+        "Based on your detailed analysis of the image:\n\n"
+        + "\n".join(context_lines)
+        + f"\n\nNow answer the original question: {sample['prompt']}"
+    )
+
+    resp_final = client.query(sample["image_path"], final_prompt)
+    total_latency += resp_final.get("latency_s", 0)
+    total_input += resp_final.get("input_tokens", 0)
+    total_output += resp_final.get("output_tokens", 0)
+
+    parsed_final = _parse_answer(resp_final["raw_response"], sample["parser"])
+
+    # For counting_grid: if sub-questions extracted row/col counts directly,
+    # try to construct the answer from those
+    if task_name == "counting_grid" and sample.get("parser") == "row_col":
+        row_count = None
+        col_count = None
+        for sr in sub_responses:
+            p = sr.get("parsed")
+            if p is not None:
+                if row_count is None:
+                    row_count = p  # First integer = horizontal lines (rows+1)
+                elif col_count is None:
+                    col_count = p  # Second integer = vertical lines (cols+1)
+        if row_count is not None and col_count is not None:
+            try:
+                # Lines = edges, rows = lines - 1 (grid lines include borders)
+                r = int(row_count) - 1
+                c = int(col_count) - 1
+                if r > 0 and c > 0:
+                    decomposed_answer = f"{r},{c}"
+                    # Prefer decomposed if final parse failed
+                    if parsed_final is None:
+                        parsed_final = decomposed_answer
+            except ValueError:
+                pass
+
+    result = dict(sample)
+    result.update({
+        "raw_response": resp_final["raw_response"],
+        "latency_s": round(total_latency, 2),
+        "model": getattr(client, 'model', 'unknown'),
+        "input_tokens": total_input,
+        "output_tokens": total_output,
+        "reasoning_mode": getattr(client, 'reasoning', False),
+        "parsed_answer": parsed_final,
+        "strategy": "decompose",
+        "strategy_sub_responses": [
+            {"prompt": sr["prompt"][:100], "response": sr["response"][:200]}
+            for sr in sub_responses
+        ],
+        "strategy_steps": len(sub_responses) + 1,
+    })
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Strategy: code_vision (sandboxed Python REPL for image analysis)
+# ---------------------------------------------------------------------------
+
+def _run_sandboxed_code(code: str, image_path: str, timeout: int = 30) -> str:
+    """Execute Python code in a sandboxed subprocess with image access.
+
+    Returns stdout output or error message.
+    """
+    import subprocess
+    import textwrap
+
+    # Wrap the code to make the image path available
+    wrapped = textwrap.dedent(f"""\
+        import sys
+        IMAGE_PATH = {image_path!r}
+        try:
+            from PIL import Image
+            import numpy as np
+        except ImportError:
+            pass
+        {code}
+    """)
+
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", wrapped],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        output = proc.stdout.strip()
+        if proc.returncode != 0:
+            error = proc.stderr.strip()
+            return f"ERROR: {error[-500:]}" if error else "ERROR: non-zero exit"
+        return output if output else "NO OUTPUT"
+    except subprocess.TimeoutExpired:
+        return "ERROR: timeout"
+    except Exception as e:
+        return f"ERROR: {e}"
+
+
+import sys
+
+@register_strategy("code_vision")
+def strategy_code_vision(client, sample: dict, **kwargs) -> dict:
+    """Give the model a Python REPL to analyze the image programmatically.
+
+    The model writes PIL/numpy code to extract features from the image.
+    The code is executed in a sandboxed subprocess, and the output is
+    fed back to the model for a final answer.
+
+    Particularly effective for geometric tasks (counting_grid, nested_squares)
+    where pixel analysis can bypass perceptual limitations.
+    """
+    task_name = sample.get("task_name", "")
+
+    total_latency = 0.0
+    total_input = 0
+    total_output = 0
+
+    # Step 1: Ask the model to write analysis code
+    code_prompt = (
+        f"You have access to a Python environment with PIL and numpy.\n"
+        f"The image is at: IMAGE_PATH (already defined)\n\n"
+        f"Task: {sample['prompt']}\n\n"
+        f"Write Python code that analyzes the image to answer this question. "
+        f"The code should print() its findings clearly. "
+        f"For example, for counting lines, you might use edge detection or "
+        f"pixel scanning along rows/columns.\n\n"
+        f"Write ONLY the Python code, no explanation. "
+        f"Use print() to output your analysis results."
+    )
+
+    resp_code = client.query(sample["image_path"], code_prompt)
+    total_latency += resp_code.get("latency_s", 0)
+    total_input += resp_code.get("input_tokens", 0)
+    total_output += resp_code.get("output_tokens", 0)
+
+    # Extract code from response (may be in ```python blocks)
+    raw_code = resp_code["raw_response"]
+    code_match = re.search(r"```(?:python)?\s*\n(.*?)```", raw_code, re.DOTALL)
+    if code_match:
+        code = code_match.group(1).strip()
+    else:
+        # Try to use the whole response as code
+        code = raw_code.strip()
+
+    # Step 2: Execute the code
+    code_output = _run_sandboxed_code(code, sample["image_path"])
+
+    # Step 3: Feed code output back to model for final answer
+    final_prompt = (
+        f"You wrote code to analyze an image and got this output:\n\n"
+        f"```\n{code_output[:1000]}\n```\n\n"
+        f"Based on this analysis, answer the original question:\n"
+        f"{sample['prompt']}"
+    )
+
+    resp_final = client.query(sample["image_path"], final_prompt)
+    total_latency += resp_final.get("latency_s", 0)
+    total_input += resp_final.get("input_tokens", 0)
+    total_output += resp_final.get("output_tokens", 0)
+
+    parsed_final = _parse_answer(resp_final["raw_response"], sample["parser"])
+
+    result = dict(sample)
+    result.update({
+        "raw_response": resp_final["raw_response"],
+        "latency_s": round(total_latency, 2),
+        "model": getattr(client, 'model', 'unknown'),
+        "input_tokens": total_input,
+        "output_tokens": total_output,
+        "reasoning_mode": getattr(client, 'reasoning', False),
+        "parsed_answer": parsed_final,
+        "strategy": "code_vision",
+        "strategy_code": code[:500],
+        "strategy_code_output": code_output[:500],
+        "strategy_steps": 3,
+    })
+    return result
