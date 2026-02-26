@@ -787,7 +787,7 @@ _ADAPTIVE_TASK_STRATEGIES = {
     # verify re-examination corrects cell lookup errors
     "realistic_table": "verify",
     # decompose sub-questions help with proportion estimation
-    "pie_chart": "decompose",
+    "pie_chart": "sketchpad",
     # decompose improves bar percentage reading
     "progress_bar": "decompose",
     # majority voting reduces noise on counting
