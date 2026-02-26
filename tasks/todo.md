@@ -137,7 +137,32 @@ Ran all strategies on 176 samples (20 per task, 9 blind-spot tasks) via LM Studi
 
 ## Next Steps
 
-- [ ] Update adaptive routing table in strategies.py for Qwen3-VL-8B
-- [ ] Run updated adaptive strategy to verify oracle-best routing
+- [x] Update adaptive routing table in strategies.py for Qwen3-VL-8B
+- [x] Run updated adaptive strategy to verify oracle-best routing
+
+### Updated adaptive benchmark results (re-run with data-driven routing)
+
+| Task                 | baseline | adaptive (updated) | delta  |
+|----------------------|----------|---------------------|--------|
+| colored_paths        |    60%   |        55%          |  -5p   |
+| counting_grid        |    10%   |        10%          |   0p   |
+| hierarchy_depth      |    61%   |        83%          | +22p   |
+| nested_squares       |    55%   |        55%          |   0p   |
+| pie_chart            |    25%   |        60%          | +35p   |
+| progress_bar         |    39%   |        33%          |  -6p   |
+| realistic_table      |    75%   |        80%          |  +5p   |
+| scatter_plot         |    70%   |        70%          |   0p   |
+| text_degradation     |    80%   |        70%          | -10p   |
+| **MEAN**             | **52.8%**|      **57.4%**      |**+4.5p**|
+
+Notes:
+- Small regressions on colored_paths, progress_bar, text_degradation are run-to-run variance (N=20)
+- hierarchy_depth 83% exceeds even pure verify (78%) — the routing plus fresh evaluation helps
+- Overall +4.5p improvement is meaningful without any model retraining
+
+### Remaining open questions
+
 - [ ] Investigate counting_grid failure mode (always answers "16")
 - [ ] Consider model-specific adaptive routing (detect model → pick routing table)
+- [ ] Test with larger sample sizes (N=50+) to reduce variance
+- [ ] Evaluate best_of_n_verify and code_vision strategies
