@@ -69,8 +69,75 @@ Worst perceptual blind spots:
 | progress_bar | crop_zoom | Focus on bar region |
 | (unknown) | best_of_n | Safe default |
 
+## Phase 5: Benchmark Results — Qwen3-VL-8B (DONE)
+
+Ran all strategies on 176 samples (20 per task, 9 blind-spot tasks) via LM Studio.
+
+### Per-task accuracy (%)
+
+| Task                 | baseline | verify | crop_zoom | decompose | best_of_n | adaptive |
+|----------------------|----------|--------|-----------|-----------|-----------|----------|
+| colored_paths        |    60    |   60   |    60     |    15     |    60     |    15    |
+| counting_grid        |    10    |   10   |    10     |    10     |    10     |    10    |
+| hierarchy_depth      |    61    |   78   |    61     |    50     |    56     |    78    |
+| nested_squares       |    55    |   55   |    55     |    45     |    60     |    55    |
+| pie_chart            |    25    |   25   |    25     |    60     |    25     |    25    |
+| progress_bar         |    39    |   39   |    39     |    50     |    44     |    39    |
+| realistic_table      |    75    |   85   |    75     |    55     |    75     |    55    |
+| scatter_plot         |    70    |   70   |    70     |    55     |    70     |    70    |
+| text_degradation     |    80    |   80   |    80     |    80     |    80     |    80    |
+| **MEAN**             | **52.8** | **55.7** | **52.8** | **46.6** | **53.4** | **47.2** |
+
+### Strategy rankings
+1. **verify: 55.7%** (+2.8p vs baseline) — best overall
+2. **best_of_n: 53.4%** (+0.6p) — marginal noise reduction
+3. **baseline: 52.8%** — reference
+4. **crop_zoom: 52.8%** (0.0p) — no effect
+5. **adaptive: 47.2%** (-5.7p) — routing table was tuned for Haiku 4.5, not Qwen
+6. **decompose: 46.6%** (-6.3p) — pie_chart +35p but major regressions elsewhere
+
+### Key insights
+
+- **Verify is the winner**: +17p on hierarchy_depth (catches +1 overcount), +10p on realistic_table (re-examination catches cell lookup errors)
+- **Decompose is polarized**: +35p on pie_chart (proportion estimation via sub-questions) but -45p on colored_paths, -20p on realistic_table (sub-questions lose holistic view)
+- **Crop_zoom provides zero benefit**: Qwen3-VL-8B doesn't improve from zoomed/tiled images — the perception failures are not resolution-limited
+- **Best_of_n barely helps**: majority voting stabilizes noise (+5p on nested_squares, progress_bar) but doesn't fix systematic biases
+- **Adaptive routing needs per-model tuning**: the Haiku-4.5-optimized routing table hurts Qwen because different models have different failure modes
+- **counting_grid is unsolvable at 10%**: no strategy helps — the model defaults to "16" regardless
+
+### Oracle-best routing table for Qwen3-VL-8B
+
+| Task                 | Best strategy | Accuracy | Delta vs baseline |
+|----------------------|---------------|----------|-------------------|
+| colored_paths        | baseline      |    60%   |       0p          |
+| counting_grid        | baseline      |    10%   |       0p          |
+| hierarchy_depth      | verify        |    78%   |     +17p          |
+| nested_squares       | best_of_n     |    60%   |      +5p          |
+| pie_chart            | decompose     |    60%   |     +35p          |
+| progress_bar         | decompose     |    50%   |     +11p          |
+| realistic_table      | verify        |    85%   |     +10p          |
+| scatter_plot         | baseline      |    70%   |       0p          |
+| text_degradation     | baseline      |    80%   |       0p          |
+| **Oracle mean**      |               | **61.4%**|    **+8.6p**      |
+
+### Updated adaptive routing table (Qwen3-VL-8B)
+
+| Task | Strategy | Rationale |
+|------|----------|-----------|
+| hierarchy_depth | verify | Catches systematic +1 overcount bias |
+| realistic_table | verify | Re-examination corrects cell lookup errors |
+| pie_chart | decompose | Sub-question decomposition helps proportion estimation |
+| progress_bar | decompose | Breaking into sub-questions improves bar reading |
+| nested_squares | best_of_n | Majority voting reduces noise on counting |
+| colored_paths | baseline | All multi-pass strategies regress |
+| counting_grid | baseline | Fundamentally unsolvable at this model size |
+| scatter_plot | baseline | Already 70%, strategies don't improve |
+| text_degradation | baseline | Already 80%, strategies don't improve |
+| (unknown) | verify | Safe default with broadest improvement |
+
 ## Next Steps
 
-- [ ] Run benchmark with Qwen3-VL-8B: `python benchmark_strategies.py --api-base http://... --model ...`
-- [ ] Analyze results: `python benchmark_strategies.py --compare-only`
-- [ ] Iterate on prompts/strategies based on actual performance data
+- [ ] Update adaptive routing table in strategies.py for Qwen3-VL-8B
+- [ ] Run updated adaptive strategy to verify oracle-best routing
+- [ ] Investigate counting_grid failure mode (always answers "16")
+- [ ] Consider model-specific adaptive routing (detect model → pick routing table)

@@ -432,20 +432,21 @@ class TestAdaptiveStrategy:
         assert result["strategy"] == "adaptive"
         assert result["strategy_selected"] == "verify"
 
-    def test_routes_nested_squares_to_crop_zoom(self, mock_client, sample_dict):
-        mock_client.query.return_value = _make_response("{5}")
-        result = strategy_adaptive(mock_client, sample_dict)
-        assert result["strategy_selected"] == "crop_zoom"
-
-    def test_routes_unknown_to_best_of_n(self, mock_client, sample_dict):
-        sample_dict["task_name"] = "unknown_task"
+    def test_routes_nested_squares_to_best_of_n(self, mock_client, sample_dict):
         mock_client.query.return_value = _make_response("{5}")
         result = strategy_adaptive(mock_client, sample_dict, n=3)
         assert result["strategy_selected"] == "best_of_n"
         assert mock_client.query.call_count == 3
 
-    def test_routes_text_control_to_best_of_n(self, mock_client, sample_dict):
-        """Text controls (e.g., nested_squares_text) should use best_of_n."""
+    def test_routes_unknown_to_verify(self, mock_client, sample_dict):
+        sample_dict["task_name"] = "unknown_task"
+        mock_client.query.return_value = _make_response("{5}")
+        result = strategy_adaptive(mock_client, sample_dict, n=3)
+        assert result["strategy_selected"] == "verify"
+        assert mock_client.query.call_count == 2
+
+    def test_routes_text_control_to_verify(self, mock_client, sample_dict):
+        """Text controls (e.g., nested_squares_text) should use base task's strategy."""
         sample_dict["task_name"] = "nested_squares_text"
         mock_client.query.return_value = _make_response("{5}")
         result = strategy_adaptive(mock_client, sample_dict, n=3)
