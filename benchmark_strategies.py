@@ -46,6 +46,7 @@ ALL_STRATEGIES = [
     "best_of_n_verify",
     "adaptive",
     "iterative_refine",
+    "repl_vision",
 ]
 
 DEFAULT_SAMPLES = 20  # Per task for benchmarking
@@ -114,6 +115,8 @@ def run_strategy(manifest_path: Path, strategy: str, model: str,
         strategy_kwargs["n"] = best_of_n
     if strategy == "iterative_refine":
         strategy_kwargs["max_rounds"] = 5
+    if strategy == "repl_vision":
+        strategy_kwargs["max_iterations"] = 8
 
     actual_strategy = strategy if strategy != "baseline" else None
 

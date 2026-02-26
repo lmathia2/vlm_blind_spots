@@ -947,3 +947,227 @@ def strategy_iterative_refine(
         ),
     })
     return result
+
+
+# ---------------------------------------------------------------------------
+# Strategy: repl_vision (iterative REPL for image analysis)
+# ---------------------------------------------------------------------------
+
+_REPL_SYSTEM_PROMPT = """\
+You have an interactive Python REPL for image analysis. The following are pre-loaded:
+- `img`: PIL.Image object (already opened)
+- `pixels`: numpy array of shape (H, W, 3), dtype uint8
+- `width`, `height`: image dimensions (integers)
+
+PIL and numpy are imported. Write code in ```repl blocks to analyze the image.
+After each block, you'll see the printed output and can write more code.
+
+When you have determined the answer, write FINAL(your_answer) on its own line.
+For example: FINAL(5) or FINAL(3,4)
+
+Rules:
+- Variables persist across iterations (accumulated replay).
+- Use print() to inspect intermediate results.
+- Keep each code block focused on one analysis step.
+- Do NOT guess — use the pixel data to compute the answer.
+"""
+
+_REPL_TASK_HINTS = {
+    "counting_grid": (
+        "Hint: Scan a middle row of pixels for intensity transitions to count "
+        "vertical lines. Then scan a middle column for horizontal lines. "
+        "Grid lines are typically dark pixels on a light background."
+    ),
+    "pie_chart": (
+        "Hint: Convert to HSV and group pixels by hue to estimate slice sizes. "
+        "Ignore the white/near-white background. Each unique hue cluster "
+        "corresponds to a pie slice."
+    ),
+    "nested_squares": (
+        "Hint: Scan along a horizontal line through the center. Count distinct "
+        "dark-to-light transitions — each pair of transitions represents a "
+        "square boundary."
+    ),
+    "progress_bar": (
+        "Hint: Identify the bar region (non-background horizontal band). "
+        "Measure the width of the filled (colored) portion vs total bar width."
+    ),
+}
+
+_ITER_BOUNDARY = "---ITER_BOUNDARY---"
+
+
+def _run_repl_session(
+    code_snippets: list[str], image_path: str, timeout: int = 30,
+) -> str:
+    """Execute accumulated code snippets in a single sandboxed subprocess.
+
+    Each snippet's output is separated by boundary markers. All prior
+    snippets are replayed to preserve the namespace.
+    """
+    import subprocess
+    import textwrap
+
+    # Build the combined script: setup + all snippets with boundary markers
+    setup = textwrap.dedent(f"""\
+        import sys
+        from PIL import Image
+        import numpy as np
+        img = Image.open({image_path!r})
+        pixels = np.array(img)
+        width, height = img.size
+    """)
+
+    parts = [setup]
+    for i, snippet in enumerate(code_snippets):
+        if i > 0:
+            parts.append(f"print({_ITER_BOUNDARY!r})")
+        parts.append(snippet)
+
+    combined = "\n".join(parts)
+
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", combined],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        output = proc.stdout.strip()
+        if proc.returncode != 0:
+            error = proc.stderr.strip()
+            return f"ERROR: {error[-500:]}" if error else "ERROR: non-zero exit"
+        return output if output else "NO OUTPUT"
+    except subprocess.TimeoutExpired:
+        return "ERROR: timeout"
+    except Exception as e:
+        return f"ERROR: {e}"
+
+
+def _build_repl_continuation(
+    sample: dict, iteration_history: list[dict],
+) -> str:
+    """Build the continuation prompt with full iteration history."""
+    lines = ["Here is your analysis so far:\n"]
+    for entry in iteration_history:
+        lines.append(f"## Iteration {entry['iteration']}")
+        lines.append(f"Code:\n```python\n{entry['code']}\n```")
+        lines.append(f"Output:\n```\n{entry['output']}\n```\n")
+
+    lines.append(
+        "Continue your analysis. Write another ```repl block, or write "
+        "FINAL(answer) if you have determined the answer to:\n"
+        f"{sample['prompt']}"
+    )
+    return "\n".join(lines)
+
+
+@register_strategy("repl_vision")
+def strategy_repl_vision(
+    client, sample: dict, max_iterations: int = 8, **kwargs,
+) -> dict:
+    """Iterative REPL strategy: model writes code, sees results, iterates.
+
+    Uses accumulated code replay for namespace persistence across
+    iterations. The model signals completion with FINAL(answer).
+    """
+    task_name = sample.get("task_name", "")
+    hint = _REPL_TASK_HINTS.get(task_name, "")
+
+    total_latency = 0.0
+    total_input = 0
+    total_output = 0
+
+    code_snippets: list[str] = []
+    iteration_history: list[dict] = []
+    final_match = None
+
+    for iteration in range(max_iterations):
+        # Build prompt
+        if iteration == 0:
+            prompt = (
+                f"{_REPL_SYSTEM_PROMPT}\n"
+                f"Task: {sample['prompt']}\n"
+                f"{hint}\n\n"
+                f"Write your first ```repl block to begin analyzing the image."
+            )
+        else:
+            prompt = _build_repl_continuation(sample, iteration_history)
+
+        resp = client.query(sample["image_path"], prompt)
+        total_latency += resp.get("latency_s", 0)
+        total_input += resp.get("input_tokens", 0)
+        total_output += resp.get("output_tokens", 0)
+
+        raw = resp["raw_response"]
+
+        # Check for FINAL(answer) before code extraction
+        final_match = re.search(r"FINAL\((.+?)\)", raw)
+        if final_match:
+            break
+
+        # Extract code from ```repl or ```python blocks
+        code_match = re.search(r"```(?:repl|python)?\s*\n(.*?)```", raw, re.DOTALL)
+        if code_match:
+            code = code_match.group(1).strip()
+        else:
+            # No code block and no FINAL — try the whole response as code
+            code = raw.strip()
+
+        code_snippets.append(code)
+
+        # Execute accumulated snippets
+        full_output = _run_repl_session(
+            code_snippets, sample["image_path"],
+        )
+
+        # Extract only the latest iteration's output
+        boundary_parts = full_output.split(_ITER_BOUNDARY)
+        latest_output = boundary_parts[-1].strip() if boundary_parts else full_output
+
+        iteration_history.append({
+            "iteration": iteration + 1,
+            "code": code,
+            "output": latest_output[:1000],
+        })
+
+    # Determine final answer
+    if final_match:
+        # Parse the FINAL(answer) value through the task parser
+        final_raw = final_match.group(1).strip()
+        parsed_final = _parse_answer(f"{{{final_raw}}}", sample["parser"])
+        if parsed_final is None:
+            # Try parsing the raw value directly
+            parsed_final = _parse_answer(final_raw, sample["parser"])
+    else:
+        # No FINAL — ask model to interpret results (fallback like code_vision)
+        history_summary = "\n".join(
+            f"Iteration {e['iteration']} output: {e['output'][:300]}"
+            for e in iteration_history
+        )
+        fallback_prompt = (
+            f"You analyzed an image with multiple rounds of code.\n\n"
+            f"Results:\n{history_summary}\n\n"
+            f"Based on this analysis, answer:\n{sample['prompt']}"
+        )
+        resp_fb = client.query(sample["image_path"], fallback_prompt)
+        total_latency += resp_fb.get("latency_s", 0)
+        total_input += resp_fb.get("input_tokens", 0)
+        total_output += resp_fb.get("output_tokens", 0)
+        parsed_final = _parse_answer(resp_fb["raw_response"], sample["parser"])
+
+    result = dict(sample)
+    result.update({
+        "raw_response": resp["raw_response"],
+        "latency_s": round(total_latency, 2),
+        "model": getattr(client, "model", "unknown"),
+        "input_tokens": total_input,
+        "output_tokens": total_output,
+        "reasoning_mode": getattr(client, "reasoning", False),
+        "parsed_answer": parsed_final,
+        "strategy": "repl_vision",
+        "strategy_iterations": len(iteration_history),
+        "strategy_had_final": final_match is not None,
+        "strategy_code_snippets": [s[:200] for s in code_snippets],
+    })
+    return result
