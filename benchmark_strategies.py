@@ -96,12 +96,20 @@ def generate_benchmark_data(tasks: list[str], n_samples: int):
     return combined_path
 
 
+def _model_slug(model: str) -> str:
+    """Convert a model name to a filesystem-safe slug."""
+    # Strip vendor prefix (e.g. "qwen/" from "qwen/qwen3-vl-8b")
+    slug = model.rsplit("/", 1)[-1]
+    # Replace unsafe chars
+    return slug.replace(" ", "_").replace(":", "_")
+
+
 def run_strategy(manifest_path: Path, strategy: str, model: str,
                  api_base: str, best_of_n: int = 5, workers: int = 3):
     """Run a single strategy and return the results path."""
     from harness import evaluate_manifest
 
-    strategy_dir = RESULTS_DIR / "benchmark" / strategy
+    strategy_dir = RESULTS_DIR / "benchmark" / _model_slug(model) / strategy
     results_path = strategy_dir / "results.jsonl"
 
     # Clear previous results for fresh comparison
@@ -257,9 +265,10 @@ def main():
     args = parser.parse_args()
 
     if args.compare_only:
+        model = args.model or MODEL
         results_paths = {}
         for s in args.strategies:
-            p = RESULTS_DIR / "benchmark" / s / "results.jsonl"
+            p = RESULTS_DIR / "benchmark" / _model_slug(model) / s / "results.jsonl"
             if p.exists():
                 results_paths[s] = p
         print_comparison(results_paths)
