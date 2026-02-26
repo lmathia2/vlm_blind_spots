@@ -15,6 +15,9 @@
 - **Rule**: For dynamic-prompt tasks, always verify the manifest contains non-null prompts before running evaluation. Add a pre-evaluation check or assertion.
 - **Example**: table_cell_read went from 0% → 100% after fixing the prompt. The original 0% was entirely a measurement artifact.
 
-### 2026-02-15 Small sample sizes and easy params mask real difficulty
+### 2026-02-26 Model-generated code is unreliable for image analysis
+- **Pattern**: The `repl_vision` strategy asked Qwen3-VL-8B to write pixel-analysis code iteratively. The model generated buggy code (wrong APIs like `Image.convert` instead of `img.convert`), fell into mode confusion (writing prose instead of code), and never signaled FINAL in most cases. Result: -11.9p vs baseline across all tasks.
+- **Rule**: Don't ask an 8B VLM to write image analysis code. Instead, use pre-built, tested vision primitives and feed the *results* (annotated images, not text stdout) back to the model. The model is better at interpreting visual annotations than writing code.
+- **Example**: Before: model writes `hsv = np.array(Image.convert(img, 'HSV'))` (crashes). After: pre-built `segment_colors(image)` runs correctly and overlays percentage labels on the image for the model to read.
 - **Pattern**: nested_squares showed 97.9% accuracy on 48 samples (depth 2-5, thick lines) but dropped to 51.7% on 315 samples with harder params (depth 2-8, reduction 0.4-0.8, thin lines). The original result was misleadingly optimistic.
 - **Rule**: When generated images are much easier than reference benchmarks, expand sweep axes to include harder parameter values before drawing conclusions. Match difficulty to the reference dataset range.
