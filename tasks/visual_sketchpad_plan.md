@@ -15,28 +15,100 @@ The removed `repl_vision` strategy failed (-11.9p) because it asked the model to
 ```
 Input: image + prompt + task_name (may be unknown)
 
-Step 1: Infer analysis plan from the query
-  → classify_query(prompt, task_name) → list of (primitive, args) pairs
-  → uses keyword matching on the prompt + task_name if available
-  → e.g., "how many levels" → hierarchy analysis
-       "what percentage" + pie visual cues → color segmentation
-       "count...squares" → contour detection
-       "what does the text say" → enhance + crop
+Step 0: Decompose question into sub-questions
+  → decompose_question(prompt, task_name) → list of sub-questions
+  → Each sub-question targets one aspect of the original query
+  → e.g., "What percentage does the blue slice represent?"
+       → sub_q1: "What distinct color regions exist in the image?"
+       → sub_q2: "What is the area of the blue region relative to total?"
+  → e.g., "How many levels are in the hierarchy?"
+       → sub_q1: "Where are the boxes/nodes in the image?"
+       → sub_q2: "How many horizontal rows do they form?"
+  → For simple queries, may return just [original_prompt] (no decomposition)
+
+Step 1: For each sub-question, infer an analysis plan
+  → classify_query(sub_question, task_name) → list of (primitive, args) pairs
+  → uses keyword matching on the sub-question + task_name if available
 
 Step 2 (Pass 0 — automatic, no model call):
-  Execute the inferred primitive sequence
-  → annotate sketchpad_image, accumulate findings[]
+  Execute all sub-question primitive sequences in order
+  → annotate sketchpad_image, accumulate findings[] per sub-question
+  → Each sub-question's findings are labeled: "Sub-Q1: ...", "Sub-Q2: ..."
 
 Step 3 (Pass 1..N — model-driven, max 2 additional passes):
-  1. Send [sketchpad_image] + [findings summary] + [available tools] + [prompt] to VLM
+  1. Send [sketchpad_image] + [all sub-question findings] + [available tools] + [prompt] to VLM
   2. Model responds with either:
      a) TOOL(primitive_name, args) — request another primitive
      b) ANSWER(response) — final answer
   3. If TOOL: execute primitive, update sketchpad_image + findings, go to next pass
   4. If ANSWER: parse and return
 
+Step 4: Aggregate results
+  → If multiple sub-questions produced independent findings, combine them
+  → Aggregation method depends on question type:
+     - Counting: sum or max across sub-questions
+     - Comparison: select the relevant sub-question's answer
+     - Composition: model synthesizes from all sub-question findings (done in Step 3)
+  → For most cases, the model handles aggregation naturally in Step 3's ANSWER
+
 Max passes: 3 (1 automatic + up to 2 model-driven)
 ```
+
+### Question Decomposition (`decompose_question`)
+
+Before selecting primitives, the question is decomposed into sub-questions that can each be independently analyzed. This handles multi-aspect questions and provides structured intermediate results.
+
+```python
+# Task-aware decomposition templates
+DECOMPOSITION_TEMPLATES = {
+    "pie_chart": [
+        "What distinct color regions exist in the image and what are their relative areas?",
+        "What is the area of the {target} region as a percentage of the whole?",
+    ],
+    "counting_grid": [
+        "How many horizontal lines are in the grid?",
+        "How many vertical lines are in the grid?",
+    ],
+    "hierarchy_depth": [
+        "Where are the boxes or nodes positioned in the image?",
+        "How many distinct horizontal rows do the boxes form?",
+    ],
+    "progress_bar": [
+        "Where are the progress bars in the image?",
+        "What fraction of each bar is filled vs unfilled?",
+    ],
+    "colored_paths": [
+        "What distinct colored paths exist in the image?",
+        "What are the start and end stations for each colored path?",
+    ],
+    "realistic_table": [
+        "Where are the table cell boundaries?",
+        "What is the content of the cell at the target row and column?",
+    ],
+    "nested_squares": [
+        "What rectangular contours exist in the image?",
+        "How many concentric squares are there from outside to inside?",
+    ],
+    "scatter_plot": [
+        "Where are the data points in the image?",
+        "What is the y-value of the {target_color} point at x={target_x}?",
+    ],
+    "text_degradation": [
+        "What text region needs to be read?",
+    ],
+}
+
+# For unknown tasks or when task_name is unavailable, use query-based heuristics:
+# - Questions with "and" or multiple question marks → split into parts
+# - Questions asking "what percentage of X" → decompose into "find X" + "measure X"
+# - Single-focus questions → no decomposition, pass through as-is
+```
+
+**Why decomposition helps:**
+- **Counting grid**: Separating horizontal vs vertical line counting prevents the model from confusing the two dimensions
+- **Pie chart**: First identifying all slices, then measuring the target slice, avoids skipping small slices
+- **Hierarchy**: Separating box detection from level counting lets the model focus on each step
+- **Simple questions**: Pass through without decomposition — no overhead for easy tasks
 
 ### Query Classification (`classify_query`)
 
@@ -92,7 +164,7 @@ The `task_name` field (if available) acts as a tiebreaker when multiple patterns
 - Unknown tasks (not in the 9 benchmarks) still get appropriate analysis based on what the question asks
 - The prompt often contains stronger signal than the task name (e.g., "count the number of horizontal rows" directly tells us to do box detection + y-clustering)
 
-**Pass 0** runs the inferred primitive sequence automatically. This is still deterministic and free (no model call), but the *choice* of primitives is query-conditioned.
+**Pass 0** decomposes the question into sub-questions, classifies each, and runs the inferred primitive sequences automatically. This is still deterministic and free (no model call), but the *choice* and *ordering* of primitives is query-conditioned.
 
 **Passes 1-N** remain model-driven: the model can request additional primitives beyond the initial plan, or just answer directly.
 
@@ -186,7 +258,7 @@ Pre-built, tested functions that analyze images and return both annotations and 
 
 | File | Changes |
 |------|---------|
-| `sketchpad.py` (NEW) | Vision primitives library + per-task analysis plans |
+| `sketchpad.py` (NEW) | Vision primitives library + `decompose_question()` + `classify_query()` + per-task analysis plans |
 | `strategies.py` | Add `strategy_sketchpad()` that calls sketchpad analysis |
 | `cli.py` | Add `"sketchpad"` to strategy choices |
 | `benchmark_strategies.py` | Add to ALL_STRATEGIES |
@@ -196,13 +268,14 @@ Pre-built, tested functions that analyze images and return both annotations and 
 ### Implementation sequence
 
 1. Create `sketchpad.py` with vision primitives library
-2. Add per-task analysis plans to `sketchpad.py`
-3. Add `strategy_sketchpad()` to `strategies.py`
-4. Wire into CLI and benchmark runner
-5. Write unit tests for primitives
-6. Write strategy tests
-7. Run full test suite
-8. Benchmark on 176 samples
+2. Add `decompose_question()` and `classify_query()` to `sketchpad.py`
+3. Add per-task analysis plans to `sketchpad.py`
+4. Add `strategy_sketchpad()` to `strategies.py`
+5. Wire into CLI and benchmark runner
+6. Write unit tests for primitives and decomposition
+7. Write strategy tests
+8. Run full test suite
+9. Benchmark on 176 samples
 
 ### Key design decisions
 
@@ -221,8 +294,13 @@ Pass 1+ prompt structure:
 You are analyzing an image with a visual sketchpad. The image has been
 annotated with analysis results from vision tools.
 
-Analysis so far:
-{findings_summary}
+The question was decomposed into sub-questions. Analysis so far:
+
+Sub-Q1: {sub_question_1}
+  Findings: {findings_1}
+
+Sub-Q2: {sub_question_2}
+  Findings: {findings_2}
 
 Available tools (reply with TOOL(name, args) to use one):
 - crop_and_enhance(region): Zoom into a region ("center", "top-left", etc.)
@@ -232,7 +310,8 @@ Available tools (reply with TOOL(name, args) to use one):
 - measure_bar_fill(): Measure filled vs total width of bars
 - detect_boxes(): Find rectangular boxes and their positions
 
-Or reply with ANSWER followed by your response to:
+Synthesize the sub-question findings and reply with ANSWER followed by
+your response to the original question:
 {original_prompt}
 ```
 
