@@ -384,7 +384,9 @@ def evaluate_manifest(
                         trace_record[key] = result[key]
                 # Include strategy fields
                 for key in ("strategy", "strategy_n", "strategy_votes",
-                            "strategy_final_changed", "strategy_verify_confirmed"):
+                            "strategy_final_changed", "strategy_verify_confirmed",
+                            "strategy_passes", "strategy_findings",
+                            "strategy_sub_questions"):
                     if key in result:
                         trace_record[key] = result[key]
                 # Include reasoning fields
