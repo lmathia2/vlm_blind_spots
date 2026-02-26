@@ -823,3 +823,127 @@ def strategy_adaptive(client, sample: dict, n: int = 5, **kwargs) -> dict:
     result["strategy"] = "adaptive"
     result["strategy_selected"] = selected
     return result
+
+
+# ---------------------------------------------------------------------------
+# Strategy: iterative_refine (multi-round prompt refinement)
+# ---------------------------------------------------------------------------
+
+_REFINEMENT_CRITIQUES = {
+    "counting_grid": (
+        "Scan the image systematically: count horizontal lines by moving "
+        "top-to-bottom, then count vertical lines by moving left-to-right. "
+        "Include border lines. Don't guess — be methodical."
+    ),
+    "pie_chart": (
+        "Verify that your estimated percentages sum to 100%. Use visual "
+        "anchors: a quarter-circle is 25%, a half is 50%. Re-examine each "
+        "slice's angle relative to these anchors."
+    ),
+    "progress_bar": (
+        "Estimate the filled portion relative to the full bar width. "
+        "Look for tick marks, labels, or percentage indicators as reference "
+        "points. Express your answer as a percentage."
+    ),
+    "hierarchy_depth": (
+        "Count the number of HORIZONTAL ROWS of boxes, not the number of "
+        "connections. The root is row 1. Count each distinct row below it."
+    ),
+    "nested_squares": (
+        "Check the center of the image carefully for tiny inner squares "
+        "you may have missed. Count from the outermost square inward."
+    ),
+}
+
+_REFINEMENT_GENERIC = "Re-examine the image step by step. Check your previous answer carefully."
+
+
+def _build_refinement_prompt(
+    sample: dict, prior_answers: list[str], round_num: int,
+) -> str:
+    """Build a critique prompt incorporating all prior answers."""
+    task_name = sample.get("task_name", "")
+    critique = _REFINEMENT_CRITIQUES.get(task_name, _REFINEMENT_GENERIC)
+
+    history = "\n".join(
+        f"  Round {i+1}: {a}" for i, a in enumerate(prior_answers)
+    )
+    return (
+        f"You have answered this question about the image {len(prior_answers)} time(s):\n\n"
+        f"Question: {sample['prompt']}\n"
+        f"Your prior answers:\n{history}\n\n"
+        f"Critique: {critique}\n\n"
+        f"Look at the image again. Provide your revised answer in the same "
+        f"format as the original question asks."
+    )
+
+
+@register_strategy("iterative_refine")
+def strategy_iterative_refine(
+    client, sample: dict, max_rounds: int = 5, **kwargs,
+) -> dict:
+    """Multi-round refinement with task-specific critique prompts.
+
+    Unlike verify (single re-examination), this iterates up to max_rounds
+    with evolving critique directives until the answer converges (same
+    parsed answer for 2 consecutive rounds).
+    """
+    total_latency = 0.0
+    total_input = 0
+    total_output = 0
+    prior_answers: list[str] = []
+    raw_responses: list[str] = []
+    parsed_answers: list[Optional[str]] = []
+
+    for round_num in range(max_rounds):
+        if round_num == 0:
+            prompt = sample["prompt"]
+        else:
+            prompt = _build_refinement_prompt(sample, prior_answers, round_num)
+
+        resp = client.query(sample["image_path"], prompt)
+        total_latency += resp.get("latency_s", 0)
+        total_input += resp.get("input_tokens", 0)
+        total_output += resp.get("output_tokens", 0)
+
+        raw_responses.append(resp["raw_response"])
+        parsed = _parse_answer(resp["raw_response"], sample["parser"])
+        parsed_answers.append(parsed)
+        prior_answers.append(
+            parsed if parsed is not None else resp["raw_response"][:200]
+        )
+
+        # Convergence: stop when 2 consecutive rounds give the same parsed answer
+        if (
+            round_num >= 1
+            and parsed is not None
+            and parsed == parsed_answers[round_num - 1]
+        ):
+            break
+
+    # Final answer is the last successfully parsed answer
+    final_answer = None
+    for a in reversed(parsed_answers):
+        if a is not None:
+            final_answer = a
+            break
+
+    result = dict(sample)
+    result.update({
+        "raw_response": raw_responses[-1],
+        "latency_s": round(total_latency, 2),
+        "model": getattr(client, "model", "unknown"),
+        "input_tokens": total_input,
+        "output_tokens": total_output,
+        "reasoning_mode": getattr(client, "reasoning", False),
+        "parsed_answer": final_answer,
+        "strategy": "iterative_refine",
+        "strategy_rounds": len(parsed_answers),
+        "strategy_all_answers": parsed_answers,
+        "strategy_converged": (
+            len(parsed_answers) >= 2
+            and parsed_answers[-1] is not None
+            and parsed_answers[-1] == parsed_answers[-2]
+        ),
+    })
+    return result

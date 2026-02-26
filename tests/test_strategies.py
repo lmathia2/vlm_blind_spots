@@ -18,12 +18,14 @@ from strategies import (
     strategy_decompose,
     strategy_code_vision,
     strategy_adaptive,
+    strategy_iterative_refine,
     _majority_vote,
     _crop_image,
     _tile_image,
     _parse_answer,
     _save_temp_image,
     _run_sandboxed_code,
+    _build_refinement_prompt,
 )
 
 
@@ -408,6 +410,7 @@ class TestStrategyRegistry:
         expected = {
             "baseline", "best_of_n", "crop_zoom", "verify",
             "best_of_n_verify", "decompose", "code_vision", "adaptive",
+            "iterative_refine",
         }
         assert expected == set(STRATEGY_REGISTRY.keys())
 
@@ -614,3 +617,104 @@ class TestCodeVisionStrategy:
         result = strategy_code_vision(mock_client, sample_dict)
         assert result["input_tokens"] == 200
         assert result["latency_s"] == 1.5
+
+
+# ---------------------------------------------------------------------------
+# Strategy: iterative_refine (multi-round prompt refinement)
+# ---------------------------------------------------------------------------
+
+class TestBuildRefinementPrompt:
+    def test_includes_prior_answers(self, sample_dict):
+        prompt = _build_refinement_prompt(sample_dict, ["3", "5"], 2)
+        assert "Round 1: 3" in prompt
+        assert "Round 2: 5" in prompt
+
+    def test_task_specific_critique(self, sample_dict):
+        sample_dict["task_name"] = "counting_grid"
+        prompt = _build_refinement_prompt(sample_dict, ["4,4"], 1)
+        assert "Scan" in prompt  # From _REFINEMENT_CRITIQUES
+
+    def test_generic_critique_for_unknown_task(self, sample_dict):
+        sample_dict["task_name"] = "unknown_task"
+        prompt = _build_refinement_prompt(sample_dict, ["5"], 1)
+        assert "Re-examine" in prompt
+
+
+class TestIterativeRefineStrategy:
+    def test_converges_immediately(self, mock_client, sample_dict):
+        """Two consecutive same answers -> stop early."""
+        responses = [
+            _make_response("{5}"),  # round 1
+            _make_response("{5}"),  # round 2 — same, converge
+        ]
+        mock_client.query.side_effect = responses
+        result = strategy_iterative_refine(mock_client, sample_dict, max_rounds=5)
+        assert result["parsed_answer"] == "5"
+        assert result["strategy"] == "iterative_refine"
+        assert result["strategy_rounds"] == 2
+        assert result["strategy_converged"] is True
+        assert mock_client.query.call_count == 2
+
+    def test_corrects_after_critique(self, mock_client, sample_dict):
+        """Model changes answer, then converges on the new one."""
+        responses = [
+            _make_response("{3}"),  # round 1
+            _make_response("{5}"),  # round 2 — changed
+            _make_response("{5}"),  # round 3 — converged
+        ]
+        mock_client.query.side_effect = responses
+        result = strategy_iterative_refine(mock_client, sample_dict, max_rounds=5)
+        assert result["parsed_answer"] == "5"
+        assert result["strategy_rounds"] == 3
+        assert result["strategy_converged"] is True
+
+    def test_max_rounds_respected(self, mock_client, sample_dict):
+        """Never converges, stops at max_rounds."""
+        responses = [
+            _make_response("{3}"),
+            _make_response("{4}"),
+            _make_response("{5}"),
+        ]
+        mock_client.query.side_effect = responses
+        result = strategy_iterative_refine(mock_client, sample_dict, max_rounds=3)
+        assert result["parsed_answer"] == "5"
+        assert result["strategy_rounds"] == 3
+        assert result["strategy_converged"] is False
+        assert mock_client.query.call_count == 3
+
+    def test_all_parse_failures(self, mock_client, sample_dict):
+        """All rounds fail to parse -> None answer."""
+        mock_client.query.return_value = _make_response("no answer")
+        result = strategy_iterative_refine(mock_client, sample_dict, max_rounds=3)
+        assert result["parsed_answer"] is None
+        # No convergence possible with None answers, runs all rounds
+        assert result["strategy_rounds"] == 3
+
+    def test_single_round(self, mock_client, sample_dict):
+        """max_rounds=1 should behave like baseline."""
+        mock_client.query.return_value = _make_response("{5}")
+        result = strategy_iterative_refine(mock_client, sample_dict, max_rounds=1)
+        assert result["parsed_answer"] == "5"
+        assert result["strategy_rounds"] == 1
+        assert mock_client.query.call_count == 1
+
+    def test_token_accumulation(self, mock_client, sample_dict):
+        responses = [
+            _make_response("{3}", latency=1.0),
+            _make_response("{5}", latency=0.5),
+            _make_response("{5}", latency=0.5),
+        ]
+        mock_client.query.side_effect = responses
+        result = strategy_iterative_refine(mock_client, sample_dict, max_rounds=5)
+        assert result["input_tokens"] == 300
+        assert result["latency_s"] == 2.0
+
+    def test_all_answers_recorded(self, mock_client, sample_dict):
+        responses = [
+            _make_response("{3}"),
+            _make_response("{5}"),
+            _make_response("{5}"),
+        ]
+        mock_client.query.side_effect = responses
+        result = strategy_iterative_refine(mock_client, sample_dict, max_rounds=5)
+        assert result["strategy_all_answers"] == ["3", "5", "5"]
