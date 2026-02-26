@@ -10,16 +10,24 @@ The removed `repl_vision` strategy failed (-11.9p) because it asked the model to
 
 ## Design
 
-### Architecture: Multi-Pass Visual Sketchpad
+### Architecture: Multi-Pass Query-Conditioned Visual Sketchpad
 
 ```
-Input: image + prompt + task_name
-State: sketchpad_image (initially = original image), findings = []
+Input: image + prompt + task_name (may be unknown)
 
-Pass 0 (automatic): Run task-specific default primitives
-  → annotate sketchpad_image, append to findings
+Step 1: Infer analysis plan from the query
+  → classify_query(prompt, task_name) → list of (primitive, args) pairs
+  → uses keyword matching on the prompt + task_name if available
+  → e.g., "how many levels" → hierarchy analysis
+       "what percentage" + pie visual cues → color segmentation
+       "count...squares" → contour detection
+       "what does the text say" → enhance + crop
 
-Pass 1..N (model-driven):
+Step 2 (Pass 0 — automatic, no model call):
+  Execute the inferred primitive sequence
+  → annotate sketchpad_image, accumulate findings[]
+
+Step 3 (Pass 1..N — model-driven, max 2 additional passes):
   1. Send [sketchpad_image] + [findings summary] + [available tools] + [prompt] to VLM
   2. Model responds with either:
      a) TOOL(primitive_name, args) — request another primitive
@@ -30,9 +38,63 @@ Pass 1..N (model-driven):
 Max passes: 3 (1 automatic + up to 2 model-driven)
 ```
 
-**Pass 0** is deterministic: task-specific primitives run without any model call, producing an initial annotated image. This ensures the model always gets *some* visual scaffolding even if it doesn't request more.
+### Query Classification (`classify_query`)
 
-**Passes 1-N** are model-driven: the model sees the annotated image, decides whether it needs more analysis (e.g., "zoom into the center to check for small inner squares"), and requests specific primitives. The model can also just answer directly if the annotations are sufficient.
+The analysis plan is selected based on **what the question asks**, not just the task name. This makes the strategy work for unknown tasks and avoids hard-coding task_name → primitive mappings.
+
+```python
+# Query signals → analysis category → default primitives
+QUERY_PATTERNS = [
+    # Counting lines/grid
+    (r"(grid|lines|rows.*columns|columns.*rows)", "grid_counting",
+     [("count_line_transitions", "horizontal"),
+      ("count_line_transitions", "vertical")]),
+
+    # Counting shapes (squares, circles, etc.)
+    (r"(count|how many).*(square|circle|shape|triangle|rectangle)", "shape_counting",
+     [("detect_contours",)]),
+
+    # Hierarchy / levels / depth
+    (r"(level|depth|hierarch|layers?\b|how many.*deep)", "hierarchy",
+     [("detect_boxes",), ("cluster_by_y",)]),
+
+    # Percentage / proportion (pie chart, progress bar)
+    (r"(percentage|percent|proportion|slice.*represent|progress.*bar)", "proportion",
+     [("segment_colors",)]),
+
+    # Path counting / connections
+    (r"(path|route|connect|from.*to)", "path_tracing",
+     [("segment_colors",), ("trace_colored_paths",)]),
+
+    # Table / cell lookup
+    (r"(table|row|column|cell|what is the.*for)", "table_lookup",
+     [("detect_boxes",), ("crop_and_enhance", "target_cell")]),
+
+    # Scatter plot / coordinate reading
+    (r"(y-value|x-value|scatter|point at|coordinate)", "scatter",
+     [("detect_points",)]),
+
+    # Text reading
+    (r"(text|read|say|written|OCR)", "text_reading",
+     [("crop_and_enhance", "text_region")]),
+]
+
+# Fallback: if no pattern matches, use generic edge + contour detection
+FALLBACK_PLAN = [("detect_edges",), ("detect_contours",)]
+```
+
+The `task_name` field (if available) acts as a tiebreaker when multiple patterns match, and as an override for known tasks where the query wording is ambiguous.
+
+**Priority order**: query keywords > task_name hints > fallback
+
+**Why query-conditioned matters:**
+- The same image type can have different questions (e.g., pie_chart: "what percentage" vs "how many slices" → different primitives)
+- Unknown tasks (not in the 9 benchmarks) still get appropriate analysis based on what the question asks
+- The prompt often contains stronger signal than the task name (e.g., "count the number of horizontal rows" directly tells us to do box detection + y-clustering)
+
+**Pass 0** runs the inferred primitive sequence automatically. This is still deterministic and free (no model call), but the *choice* of primitives is query-conditioned.
+
+**Passes 1-N** remain model-driven: the model can request additional primitives beyond the initial plan, or just answer directly.
 
 **Why multi-pass helps over single-pass:**
 - The model can request a **zoom/crop** after seeing the initial analysis (e.g., contour detection found 5 squares but the center looks suspicious → request `crop_and_enhance` on center region)
