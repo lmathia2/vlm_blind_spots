@@ -19,6 +19,7 @@ from strategies import (
     strategy_code_vision,
     strategy_adaptive,
     strategy_iterative_refine,
+    strategy_sketchpad,
     _majority_vote,
     _crop_image,
     _tile_image,
@@ -410,7 +411,7 @@ class TestStrategyRegistry:
         expected = {
             "baseline", "best_of_n", "crop_zoom", "verify",
             "best_of_n_verify", "decompose", "code_vision", "adaptive",
-            "iterative_refine",
+            "iterative_refine", "sketchpad",
         }
         assert expected == set(STRATEGY_REGISTRY.keys())
 
@@ -718,3 +719,87 @@ class TestIterativeRefineStrategy:
         mock_client.query.side_effect = responses
         result = strategy_iterative_refine(mock_client, sample_dict, max_rounds=5)
         assert result["strategy_all_answers"] == ["3", "5", "5"]
+
+
+# ---------------------------------------------------------------------------
+# Strategy: sketchpad (visual sketchpad with pre-built primitives)
+# ---------------------------------------------------------------------------
+
+class TestSketchpadStrategy:
+    def test_returns_answer_from_model(self, mock_client, sample_dict):
+        """Model responds with ANSWER directive on first model pass."""
+        mock_client.query.return_value = _make_response(
+            "ANSWER {5}"
+        )
+        result = strategy_sketchpad(mock_client, sample_dict, max_passes=3)
+        assert result["strategy"] == "sketchpad"
+        assert result["parsed_answer"] == "5"
+        assert result["strategy_passes"] >= 2  # pass 0 + at least 1 model pass
+
+    def test_model_requests_tool(self, mock_client, sample_dict):
+        """Model requests a tool, then answers."""
+        responses = [
+            _make_response("TOOL(detect_edges)"),
+            _make_response("ANSWER {5}"),
+        ]
+        mock_client.query.side_effect = responses
+        result = strategy_sketchpad(mock_client, sample_dict, max_passes=3)
+        assert result["parsed_answer"] == "5"
+        assert result["strategy_passes"] >= 3  # pass 0 + 2 model passes
+
+    def test_max_passes_respected(self, mock_client, sample_dict):
+        """Always requests tools → stops at max_passes."""
+        mock_client.query.return_value = _make_response(
+            "TOOL(detect_contours)"
+        )
+        result = strategy_sketchpad(mock_client, sample_dict, max_passes=2)
+        # Should stop after max_passes total (pass 0 + 1 model pass)
+        assert result["strategy_passes"] == 2
+        assert mock_client.query.call_count == 1
+
+    def test_unknown_tool_treated_as_answer(self, mock_client, sample_dict):
+        """Model requests a non-existent tool → treated as answer."""
+        mock_client.query.return_value = _make_response(
+            "TOOL(nonexistent_tool)"
+        )
+        result = strategy_sketchpad(mock_client, sample_dict, max_passes=3)
+        # Should treat this as answer since tool is unknown
+        assert mock_client.query.call_count == 1
+
+    def test_findings_recorded(self, mock_client, sample_dict):
+        """Sub-question findings are recorded in the result."""
+        mock_client.query.return_value = _make_response("ANSWER {5}")
+        result = strategy_sketchpad(mock_client, sample_dict, max_passes=3)
+        assert "strategy_findings" in result
+        assert "strategy_sub_questions" in result
+        assert result["strategy_sub_questions"] >= 1
+
+    def test_pie_chart_task(self, mock_client, sample_dict):
+        """Pie chart task uses segment_colors primitive."""
+        sample_dict["task_name"] = "pie_chart"
+        sample_dict["prompt"] = "What percentage does the blue slice represent? (A) 25% (B) 35% (C) 45% (D) 55%"
+        sample_dict["parser"] = "mc4"
+        mock_client.query.return_value = _make_response("ANSWER (B)")
+        result = strategy_sketchpad(mock_client, sample_dict, max_passes=3)
+        assert result["strategy"] == "sketchpad"
+        # segment_colors should be in findings
+        assert "segment" in result.get("strategy_findings", "").lower() or \
+               "color" in result.get("strategy_findings", "").lower()
+
+    def test_hierarchy_task(self, mock_client, sample_dict):
+        """Hierarchy task decomposes into box detection + y-clustering."""
+        sample_dict["task_name"] = "hierarchy_depth"
+        sample_dict["prompt"] = "How many levels deep is this hierarchy? {3}"
+        mock_client.query.return_value = _make_response("ANSWER {3}")
+        result = strategy_sketchpad(mock_client, sample_dict, max_passes=3)
+        assert result["strategy_sub_questions"] >= 2  # at least 2 sub-questions
+
+    def test_token_accumulation(self, mock_client, sample_dict):
+        responses = [
+            _make_response("TOOL(detect_edges)", latency=1.0),
+            _make_response("ANSWER {5}", latency=0.5),
+        ]
+        mock_client.query.side_effect = responses
+        result = strategy_sketchpad(mock_client, sample_dict, max_passes=3)
+        assert result["input_tokens"] == 200
+        assert result["latency_s"] == 1.5
