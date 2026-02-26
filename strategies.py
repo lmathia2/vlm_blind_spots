@@ -947,3 +947,133 @@ def strategy_iterative_refine(
         ),
     })
     return result
+
+
+# ---------------------------------------------------------------------------
+# Strategy: sketchpad (visual sketchpad with pre-built primitives)
+# ---------------------------------------------------------------------------
+
+@register_strategy("sketchpad")
+def strategy_sketchpad(
+    client, sample: dict, max_passes: int = 3, **kwargs,
+) -> dict:
+    """Visual Sketchpad: run pre-built vision primitives and feed annotated
+    images back to the VLM for multi-pass analysis.
+
+    Pass 0 (automatic): decompose question, classify sub-questions, run
+    primitives, annotate image, accumulate findings.
+    Passes 1-N (model-driven): model sees annotated image + findings,
+    requests more tools or provides final answer.
+    """
+    from sketchpad import (
+        run_sketchpad_pass0,
+        build_sketchpad_prompt,
+        parse_sketchpad_response,
+        PRIMITIVE_REGISTRY,
+    )
+
+    task_name = sample.get("task_name", "")
+    image_path = sample["image_path"]
+    prompt = sample["prompt"]
+
+    total_latency = 0.0
+    total_input = 0
+    total_output = 0
+
+    # Open the image
+    img = Image.open(image_path)
+
+    # Pass 0: automatic primitive execution
+    canvas, findings = run_sketchpad_pass0(img, prompt, task_name)
+
+    # Save annotated image for model consumption
+    annotated_path = _save_temp_image(canvas)
+
+    # Model-driven passes
+    raw_responses = []
+    final_answer_text = None
+    n_passes = 1  # Pass 0 counts as 1
+
+    for pass_num in range(1, max_passes):
+        # Build prompt with findings
+        sketchpad_prompt = build_sketchpad_prompt(prompt, findings, pass_num)
+
+        # Query model with annotated image
+        response = client.query(annotated_path, sketchpad_prompt)
+        total_latency += response.get("latency_s", 0)
+        total_input += response.get("input_tokens", 0)
+        total_output += response.get("output_tokens", 0)
+        raw_responses.append(response["raw_response"])
+        n_passes += 1
+
+        # Parse response
+        action, value, tool_kwargs = parse_sketchpad_response(
+            response["raw_response"]
+        )
+
+        if action == "tool" and value in PRIMITIVE_REGISTRY:
+            # Execute requested primitive
+            prim_fn = PRIMITIVE_REGISTRY[value]
+            tool_kwargs = tool_kwargs or {}
+            annotated, finding = prim_fn(canvas, **tool_kwargs)
+            canvas = annotated
+            annotated_path = _save_temp_image(canvas)
+            findings.append({
+                "sub_question": f"Model-requested (pass {pass_num})",
+                "primitives_run": [value],
+                "findings": finding,
+            })
+        elif action in ("answer", "unknown"):
+            final_answer_text = value
+            break
+        else:
+            # Unknown tool requested — treat response as answer
+            final_answer_text = response["raw_response"]
+            break
+
+    # If we exhausted passes without an explicit ANSWER, use the last response
+    if final_answer_text is None and raw_responses:
+        final_answer_text = raw_responses[-1]
+
+    # If no model passes ran (shouldn't happen, but safety), do a basic query
+    if not raw_responses:
+        sketchpad_prompt = build_sketchpad_prompt(prompt, findings, 1)
+        response = client.query(annotated_path, sketchpad_prompt)
+        total_latency += response.get("latency_s", 0)
+        total_input += response.get("input_tokens", 0)
+        total_output += response.get("output_tokens", 0)
+        raw_responses.append(response["raw_response"])
+        final_answer_text = response["raw_response"]
+        n_passes += 1
+
+    # Parse the final answer
+    parsed_final = _parse_answer(final_answer_text, sample["parser"])
+
+    # Clean up temp files
+    import os
+    try:
+        os.unlink(annotated_path)
+    except OSError:
+        pass
+
+    # Compile findings summary for tracing
+    findings_summary = "; ".join(
+        f"[{f['sub_question']}] {f['findings'][:100]}"
+        for f in findings
+    )
+
+    result = dict(sample)
+    result.update({
+        "raw_response": final_answer_text,
+        "latency_s": round(total_latency, 2),
+        "model": getattr(client, "model", "unknown"),
+        "input_tokens": total_input,
+        "output_tokens": total_output,
+        "reasoning_mode": getattr(client, "reasoning", False),
+        "parsed_answer": parsed_final,
+        "strategy": "sketchpad",
+        "strategy_passes": n_passes,
+        "strategy_findings": findings_summary[:500],
+        "strategy_sub_questions": len(findings),
+    })
+    return result
