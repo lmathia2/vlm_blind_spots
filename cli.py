@@ -211,8 +211,6 @@ def cmd_evaluate(args):
         strategy_kwargs["n"] = getattr(args, "best_of_n", 5)
     if strategy == "iterative_refine":
         strategy_kwargs["max_rounds"] = getattr(args, "max_rounds", 5)
-    if strategy == "repl_vision":
-        strategy_kwargs["max_iterations"] = getattr(args, "max_iterations", 8)
 
     evaluate_manifest(manifest_path, results_path, model=model,
                       max_workers=args.workers, reasoning=reasoning,
@@ -305,14 +303,12 @@ def main():
     ev.add_argument("--strategy", default=None,
                      choices=["baseline", "best_of_n", "crop_zoom", "verify",
                               "best_of_n_verify", "decompose", "code_vision",
-                              "adaptive", "iterative_refine", "repl_vision"],
+                              "adaptive", "iterative_refine"],
                      help="Inference-time strategy (default: baseline single-pass)")
     ev.add_argument("--best-of-n", type=int, default=5,
                      help="Number of samples for best_of_n strategy (default: 5)")
     ev.add_argument("--max-rounds", type=int, default=5,
                      help="Max refinement rounds for iterative_refine strategy (default: 5)")
-    ev.add_argument("--max-iterations", type=int, default=8,
-                     help="Max REPL iterations for repl_vision strategy (default: 8)")
     ev.set_defaults(func=cmd_evaluate)
 
     # analyze

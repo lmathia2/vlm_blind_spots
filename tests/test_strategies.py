@@ -19,16 +19,13 @@ from strategies import (
     strategy_code_vision,
     strategy_adaptive,
     strategy_iterative_refine,
-    strategy_repl_vision,
     _majority_vote,
     _crop_image,
     _tile_image,
     _parse_answer,
     _save_temp_image,
     _run_sandboxed_code,
-    _run_repl_session,
     _build_refinement_prompt,
-    _build_repl_continuation,
 )
 
 
@@ -413,7 +410,7 @@ class TestStrategyRegistry:
         expected = {
             "baseline", "best_of_n", "crop_zoom", "verify",
             "best_of_n_verify", "decompose", "code_vision", "adaptive",
-            "iterative_refine", "repl_vision",
+            "iterative_refine",
         }
         assert expected == set(STRATEGY_REGISTRY.keys())
 
@@ -721,137 +718,3 @@ class TestIterativeRefineStrategy:
         mock_client.query.side_effect = responses
         result = strategy_iterative_refine(mock_client, sample_dict, max_rounds=5)
         assert result["strategy_all_answers"] == ["3", "5", "5"]
-
-
-# ---------------------------------------------------------------------------
-# Strategy: repl_vision (iterative REPL for image analysis)
-# ---------------------------------------------------------------------------
-
-class TestReplSession:
-    def test_single_snippet(self, sample_image):
-        output = _run_repl_session(["print('hello')"], sample_image)
-        assert output == "hello"
-
-    def test_namespace_persistence(self, sample_image):
-        snippets = [
-            "x = 42",
-            "print(x + 1)",
-        ]
-        output = _run_repl_session(snippets, sample_image)
-        assert "43" in output
-
-    def test_boundary_markers(self, sample_image):
-        snippets = [
-            "print('first')",
-            "print('second')",
-        ]
-        output = _run_repl_session(snippets, sample_image)
-        assert "---ITER_BOUNDARY---" in output
-        parts = output.split("---ITER_BOUNDARY---")
-        assert "first" in parts[0]
-        assert "second" in parts[1]
-
-    def test_image_preloaded(self, sample_image):
-        snippets = ["print(f'{width}x{height}')"]
-        output = _run_repl_session(snippets, sample_image)
-        assert "512x512" in output
-
-    def test_error_captured(self, sample_image):
-        output = _run_repl_session(["raise ValueError('oops')"], sample_image)
-        assert "ERROR" in output
-
-    def test_timeout(self, sample_image):
-        output = _run_repl_session(
-            ["import time; time.sleep(100)"], sample_image, timeout=1,
-        )
-        assert "ERROR" in output
-        assert "timeout" in output
-
-
-class TestBuildReplContinuation:
-    def test_includes_history(self, sample_dict):
-        history = [
-            {"iteration": 1, "code": "print(width)", "output": "512"},
-            {"iteration": 2, "code": "print(height)", "output": "512"},
-        ]
-        prompt = _build_repl_continuation(sample_dict, history)
-        assert "Iteration 1" in prompt
-        assert "Iteration 2" in prompt
-        assert "512" in prompt
-        assert "FINAL" in prompt
-
-
-class TestReplVisionStrategy:
-    def test_final_on_first_iteration(self, mock_client, sample_dict):
-        """Model immediately writes FINAL(5) — no code execution."""
-        mock_client.query.return_value = _make_response(
-            "Looking at the image, I can clearly see 5 squares. FINAL(5)"
-        )
-        result = strategy_repl_vision(mock_client, sample_dict, max_iterations=3)
-        assert result["strategy"] == "repl_vision"
-        assert result["parsed_answer"] == "5"
-        assert result["strategy_had_final"] is True
-        assert result["strategy_iterations"] == 0
-        assert mock_client.query.call_count == 1
-
-    def test_code_then_final(self, mock_client, sample_dict):
-        """Model writes code, sees output, then writes FINAL."""
-        responses = [
-            # Iteration 1: write analysis code
-            _make_response("```repl\nprint('found 5 squares')\n```"),
-            # Iteration 2: model sees output and writes FINAL
-            _make_response("Based on the output, FINAL(5)"),
-        ]
-        mock_client.query.side_effect = responses
-        result = strategy_repl_vision(mock_client, sample_dict, max_iterations=5)
-        assert result["parsed_answer"] == "5"
-        assert result["strategy_had_final"] is True
-        assert result["strategy_iterations"] == 1
-        assert len(result["strategy_code_snippets"]) == 1
-
-    def test_fallback_no_final(self, mock_client, sample_dict):
-        """Model never writes FINAL — fallback interpretation prompt sent."""
-        responses = [
-            _make_response("```repl\nprint('analysis step 1')\n```"),
-            _make_response("```repl\nprint('analysis step 2')\n```"),
-            _make_response("{5}"),  # fallback interpretation
-        ]
-        mock_client.query.side_effect = responses
-        result = strategy_repl_vision(mock_client, sample_dict, max_iterations=2)
-        assert result["parsed_answer"] == "5"
-        assert result["strategy_had_final"] is False
-        # 2 iterations + 1 fallback = 3 calls
-        assert mock_client.query.call_count == 3
-
-    def test_max_iterations_respected(self, mock_client, sample_dict):
-        """Stops at max_iterations if no FINAL."""
-        responses = [
-            _make_response("```repl\nprint('step')\n```"),
-            _make_response("{5}"),  # fallback
-        ]
-        mock_client.query.side_effect = responses
-        result = strategy_repl_vision(mock_client, sample_dict, max_iterations=1)
-        assert result["strategy_iterations"] == 1
-        # 1 iteration + 1 fallback
-        assert mock_client.query.call_count == 2
-
-    def test_token_accumulation(self, mock_client, sample_dict):
-        responses = [
-            _make_response("```repl\nprint('ok')\n```", latency=1.0),
-            _make_response("FINAL(5)", latency=0.5),
-        ]
-        mock_client.query.side_effect = responses
-        result = strategy_repl_vision(mock_client, sample_dict, max_iterations=5)
-        assert result["input_tokens"] == 200
-        assert result["latency_s"] == 1.5
-
-    def test_python_code_fence_accepted(self, mock_client, sample_dict):
-        """```python blocks should be accepted in addition to ```repl."""
-        responses = [
-            _make_response("```python\nprint('hello')\n```"),
-            _make_response("FINAL(5)"),
-        ]
-        mock_client.query.side_effect = responses
-        result = strategy_repl_vision(mock_client, sample_dict, max_iterations=5)
-        assert result["parsed_answer"] == "5"
-        assert len(result["strategy_code_snippets"]) == 1

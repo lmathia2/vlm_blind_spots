@@ -2,13 +2,13 @@
 
 ## Abstract
 
-We evaluate eight inference-time strategies for improving vision-language model (VLM) accuracy on perceptual blind-spot tasks without model retraining. Using the VLM Blind Spots diagnostic framework, we benchmark **Qwen3-VL-8B** on 176 synthetic image samples across 9 tasks where the model exhibits the largest perception gaps. Our best approach — **adaptive per-task routing** — improves mean accuracy from 52.8% to 57.4% (+4.6 percentage points) by selecting the optimal strategy for each task type. Two newer strategies — iterative refinement and REPL-based vision — underperform the baseline on average, demonstrating that more inference-time compute does not guarantee improvement. We also present an apples-to-apples cross-model comparison with Claude Haiku 4.5 and Claude Sonnet 4.6 on the same instances, finding that inference-time strategies close approximately 27% of the gap between Qwen3-VL-8B and the Claude models.
+We evaluate seven inference-time strategies for improving vision-language model (VLM) accuracy on perceptual blind-spot tasks without model retraining. Using the VLM Blind Spots diagnostic framework, we benchmark **Qwen3-VL-8B** on 176 synthetic image samples across 9 tasks where the model exhibits the largest perception gaps. Our best approach — **adaptive per-task routing** — improves mean accuracy from 52.8% to 57.4% (+4.6 percentage points) by selecting the optimal strategy for each task type. We also present an apples-to-apples cross-model comparison with Claude Haiku 4.5 and Claude Sonnet 4.6 on the same instances, finding that inference-time strategies close approximately 27% of the gap between Qwen3-VL-8B and the Claude models.
 
 ## 1. Introduction
 
 Vision-language models often fail on visual tasks that should be straightforward — reading pie chart proportions, counting nested shapes, or following colored paths through a graph. Our prior analysis of Qwen3-VL-8B revealed a **15.3 percentage-point perception gap** between image-based and text-only performance (70.3% vs 85.6%), with 9 tasks showing particularly severe blind spots.
 
-A natural question is whether these failures can be mitigated at inference time, using additional model calls rather than expensive retraining. Inspired by recent work on inference-time compute scaling, we implement and evaluate eight strategies that compose with our existing evaluation harness:
+A natural question is whether these failures can be mitigated at inference time, using additional model calls rather than expensive retraining. Inspired by recent work on inference-time compute scaling, we implement and evaluate seven strategies that compose with our existing evaluation harness:
 
 1. **Verify** — two-pass answer-then-verify with task-specific prompts
 2. **Best-of-N** — majority voting over N=5 samples at temperature 0.7
@@ -16,8 +16,7 @@ A natural question is whether these failures can be mitigated at inference time,
 4. **Decompose** — structured sub-question decomposition with context accumulation
 5. **Code Vision** — model writes Python analysis code executed in a sandbox
 6. **Iterative Refine** — multi-round critique with task-specific prompts and convergence detection
-7. **REPL Vision** — iterative code execution with accumulated namespace persistence
-8. **Adaptive** — per-task routing to the empirically best strategy
+7. **Adaptive** — per-task routing to the empirically best strategy
 
 ## 2. Methodology
 
@@ -66,15 +65,6 @@ Multi-round prompt refinement with convergence detection:
 
 Task-specific critiques target known failure modes. For hierarchy_depth: "Count HORIZONTAL ROWS of boxes, not connections." For pie_chart: "Verify percentages sum to 100%, use 25%/50% anchors." A generic fallback is used for tasks without specific critiques.
 
-#### REPL Vision (2-9 API calls)
-Iterative code execution with accumulated namespace persistence, inspired by the RLM (Reasoning Language Model) architecture:
-1. **Iteration 1**: Present the image with a system prompt explaining the REPL environment (pre-loaded `img`, `pixels`, `width`, `height`) and task-specific pixel analysis hints
-2. **Iterations 2-N**: Model writes code in fenced blocks, sees printed output, writes more code
-3. **Termination**: Model writes `FINAL(answer)` when ready (default max_iterations=8)
-4. **Fallback**: If no FINAL signal, send an interpretation prompt with all iteration outputs
-
-Namespace persistence is achieved through accumulated replay — each subprocess re-runs all prior code snippets in sequence, preserving variables across iterations.
-
 #### Adaptive (varies)
 Route each task to its empirically best strategy based on benchmark data. The routing table is tuned per-model — strategies that help one model may hurt another.
 
@@ -106,25 +96,25 @@ The 9 tasks with the worst perceptual blind spots on Qwen3-VL-8B:
 
 ### 3.1 Strategy Comparison on Qwen3-VL-8B
 
-All eight strategies were evaluated on the same 176 samples. Results are shown in Figure 1 and Table 1.
+All seven strategies were evaluated on the same 176 samples. Results are shown in Figure 1 and Table 1.
 
 ![Strategy comparison across all tasks](figures/strategy_comparison.png)
 *Figure 1: Per-task accuracy for each inference-time strategy on Qwen3-VL-8B.*
 
 **Table 1: Strategy accuracy by task (%, N=176 total samples)**
 
-| Task | Baseline | Verify | Crop-Zoom | Decompose | Best-of-5 | Iter. Refine | REPL Vision | Adaptive |
-|------|----------|--------|-----------|-----------|-----------|-------------|-------------|----------|
-| counting_grid | 10 | 10 | 10 | 10 | 10 | 10 | 0 | 10 |
-| pie_chart | 25 | 25 | 25 | **60** | 25 | 30 | 25 | **60** |
-| progress_bar | 39 | 39 | 39 | **50** | 44 | 33 | 22 | 33 |
-| colored_paths | **60** | **60** | **60** | 15 | **60** | 55 | 35 | 55 |
-| nested_squares | 55 | 55 | 55 | 45 | 60 | **65** | 45 | 55 |
-| hierarchy_depth | 61 | 78 | 61 | 50 | 56 | 78 | 72 | **83** |
-| scatter_plot | **70** | **70** | **70** | 55 | **70** | 50 | 55 | **70** |
-| realistic_table | 75 | **85** | 75 | 55 | 75 | 55 | 45 | 80 |
-| text_degradation | **80** | **80** | **80** | **80** | **80** | **80** | 70 | 70 |
-| **Mean** | **52.8** | **55.7** | **52.8** | **46.6** | **53.4** | **50.6** | **40.9** | **57.4** |
+| Task | Baseline | Verify | Crop-Zoom | Decompose | Best-of-5 | Iter. Refine | Adaptive |
+|------|----------|--------|-----------|-----------|-----------|-------------|----------|
+| counting_grid | 10 | 10 | 10 | 10 | 10 | 10 | 10 |
+| pie_chart | 25 | 25 | 25 | **60** | 25 | 30 | **60** |
+| progress_bar | 39 | 39 | 39 | **50** | 44 | 33 | 33 |
+| colored_paths | **60** | **60** | **60** | 15 | **60** | 55 | 55 |
+| nested_squares | 55 | 55 | 55 | 45 | 60 | **65** | 55 |
+| hierarchy_depth | 61 | 78 | 61 | 50 | 56 | 78 | **83** |
+| scatter_plot | **70** | **70** | **70** | 55 | **70** | 50 | **70** |
+| realistic_table | 75 | **85** | 75 | 55 | 75 | 55 | 80 |
+| text_degradation | **80** | **80** | **80** | **80** | **80** | **80** | 70 |
+| **Mean** | **52.8** | **55.7** | **52.8** | **46.6** | **53.4** | **50.6** | **57.4** |
 
 ![Strategy impact on mean accuracy](figures/strategy_deltas.png)
 *Figure 2: Change in mean accuracy relative to baseline for each strategy.*
@@ -160,14 +150,6 @@ All eight strategies were evaluated on the same 176 samples. Results are shown i
 - realistic_table: 75% → 55% (-20p) — repeated re-examination introduces confusion on structured lookup tasks
 - scatter_plot: 70% → 50% (-20p) — critique prompts cause the model to second-guess initially correct answers
 - The convergence mechanism works as designed, but the model's self-correction ability is task-dependent
-
-**REPL Vision (-11.9p mean)** significantly underperforms all other strategies:
-- hierarchy_depth: 61% → 72% (+11p) — the only task where programmatic analysis helps
-- counting_grid: 10% → 0% — code-generated pixel analysis produces incorrect grid line counts
-- colored_paths: 60% → 35% (-25p) — pixel-level analysis cannot capture graph topology
-- realistic_table: 75% → 45% (-30p) — OCR-style pixel parsing is worse than direct visual perception
-- Many samples crashed with 400 errors due to the model generating invalid or overly long code
-- The accumulated replay mechanism works correctly, but Qwen3-VL-8B struggles to write effective image analysis code in an iterative setting
 
 **Adaptive (+4.6p mean)** achieves the best overall accuracy by routing each task to its empirically optimal strategy.
 
@@ -273,7 +255,6 @@ Our results reveal a clear pattern: **inference-time strategies help when the fa
 | Fundamental blindness | counting_grid | Nothing helps (0p) |
 | Holistic perception | colored_paths | Strategies hurt (-45p) |
 | Self-doubt | scatter_plot, realistic_table | Iterative re-examination hurts (-20p) |
-| Code generation limits | all tasks except hierarchy | REPL Vision hurts (-12p mean) |
 
 ### 5.2 The Crop-Zoom Null Result
 
@@ -281,13 +262,7 @@ The complete ineffectiveness of crop-zoom is notable. For tasks where resolution
 
 ### 5.3 Diminishing Returns of Inference-Time Compute
 
-The iterative_refine and repl_vision results demonstrate that **more inference-time compute does not reliably improve accuracy**. While verify (2 calls) achieves +3.0p, iterative_refine (2-5 calls) achieves -2.2p and repl_vision (2-9 calls) achieves -11.9p. Three key failure modes emerge:
-
-1. **Self-doubt cascade**: When repeatedly asked to reconsider, the model second-guesses correct initial answers. Scatter_plot drops from 70% to 50% with iterative_refine and realistic_table drops from 75% to 55% — tasks where the baseline answer was already correct most of the time.
-
-2. **Code generation mismatch**: Qwen3-VL-8B can identify visual features through direct perception but struggles to write pixel-level analysis code that achieves the same accuracy. The REPL Vision strategy assumes the model can translate perceptual tasks into programmatic analysis, which proves false for most tasks.
-
-3. **Error accumulation**: In multi-round strategies, errors in early rounds propagate and compound. An incorrect early analysis in REPL Vision poisons the namespace for subsequent iterations, and incorrect early answers in iterative_refine anchor the model's subsequent responses.
+The iterative_refine results demonstrate that **more inference-time compute does not reliably improve accuracy**. While verify (2 calls) achieves +3.0p, iterative_refine (2-5 calls) achieves -2.2p. The key failure mode is **self-doubt cascade**: when repeatedly asked to reconsider, the model second-guesses correct initial answers. Scatter_plot drops from 70% to 50% with iterative_refine and realistic_table drops from 75% to 55% — tasks where the baseline answer was already correct most of the time.
 
 The single re-examination in verify hits a sweet spot — enough for the model to catch systematic biases without triggering self-doubt cascades.
 
@@ -305,7 +280,7 @@ The +4.6p improvement from adaptive routing represents approximately 27% of the 
 
 2. **Adaptive per-task routing** achieves the best overall results (+4.6p), but requires model-specific calibration on benchmark data.
 
-3. **More compute does not guarantee improvement**: iterative_refine (-2.2p) and REPL vision (-11.9p) demonstrate that additional rounds of re-examination or code execution can degrade accuracy through self-doubt cascades and error accumulation.
+3. **More compute does not guarantee improvement**: iterative_refine (-2.2p) demonstrates that additional rounds of re-examination can degrade accuracy through self-doubt cascades.
 
 4. **Inference-time strategies have clear limits**: they can correct systematic biases and reduce noise, but cannot overcome fundamental perceptual blindness (counting_grid) or compensate for tasks requiring holistic spatial reasoning (colored_paths).
 
