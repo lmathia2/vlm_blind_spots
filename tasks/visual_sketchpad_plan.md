@@ -10,21 +10,41 @@ The removed `repl_vision` strategy failed (-11.9p) because it asked the model to
 
 ## Design
 
-### Architecture
+### Architecture: Multi-Pass Visual Sketchpad
 
 ```
 Input: image + prompt + task_name
-  │
-  ├─ 1. Run task-specific vision primitives (deterministic, no model)
-  │     → produces: annotated_image + text_findings
-  │
-  ├─ 2. Send annotated_image + findings + original prompt to VLM
-  │     → model answers using both visual annotations and text context
-  │
-  └─ 3. Parse answer as usual
+State: sketchpad_image (initially = original image), findings = []
+
+Pass 0 (automatic): Run task-specific default primitives
+  → annotate sketchpad_image, append to findings
+
+Pass 1..N (model-driven):
+  1. Send [sketchpad_image] + [findings summary] + [available tools] + [prompt] to VLM
+  2. Model responds with either:
+     a) TOOL(primitive_name, args) — request another primitive
+     b) ANSWER(response) — final answer
+  3. If TOOL: execute primitive, update sketchpad_image + findings, go to next pass
+  4. If ANSWER: parse and return
+
+Max passes: 3 (1 automatic + up to 2 model-driven)
 ```
 
-This is a **2-call strategy** (like verify): one programmatic analysis step + one VLM call on the annotated image. No iterative loop, no model-generated code.
+**Pass 0** is deterministic: task-specific primitives run without any model call, producing an initial annotated image. This ensures the model always gets *some* visual scaffolding even if it doesn't request more.
+
+**Passes 1-N** are model-driven: the model sees the annotated image, decides whether it needs more analysis (e.g., "zoom into the center to check for small inner squares"), and requests specific primitives. The model can also just answer directly if the annotations are sufficient.
+
+**Why multi-pass helps over single-pass:**
+- The model can request a **zoom/crop** after seeing the initial analysis (e.g., contour detection found 5 squares but the center looks suspicious → request `crop_and_enhance` on center region)
+- The model can **validate** programmatic findings against its own perception (e.g., "the color segmentation says 38% but that looks closer to 30% to me")
+- The model can request **different primitives** than the default set (e.g., for an unusual pie chart, request edge detection instead of color segmentation)
+
+**Why this won't degrade like repl_vision:**
+- The model doesn't write code — it selects from a fixed menu of tested primitives
+- Each primitive is self-contained and correct — no accumulating errors
+- The model sees visual results (annotated images), not text stdout
+- Max 3 passes prevents self-doubt cascades
+- Pass 0 is free (no model call) and provides a strong starting point
 
 ### Vision Primitives Library
 
@@ -125,10 +145,36 @@ Pre-built, tested functions that analyze images and return both annotations and 
 ### Key design decisions
 
 - **No external models** — all primitives use PIL, numpy, and optionally OpenCV. No SAM, no GroundingDINO. This keeps the strategy self-contained and runnable locally.
-- **Deterministic analysis** — the vision primitives are pure functions. No model calls, no randomness. The only model call is the final VLM query on the annotated image.
-- **2-call strategy** — one programmatic step + one VLM call. Simple, fast, predictable cost.
+- **Pass 0 is deterministic** — task-specific primitives run automatically without a model call. This guarantees useful annotations even if the model doesn't request more.
+- **Multi-pass with hard cap** — max 3 passes (1 auto + 2 model-driven). Enough for the model to refine analysis without self-doubt cascades.
+- **Tool selection, not code generation** — the model picks from a fixed menu (`TOOL(name, args)`) rather than writing arbitrary code. This eliminates syntax errors and API misuse.
 - **Annotated image as primary output** — the VLM sees the annotations visually, not as text. This is the core distinction from code_vision/repl_vision.
 - **Text findings as supplement** — a brief text summary accompanies the annotated image, giving the model both visual and textual scaffolding.
+- **Cumulative sketchpad** — annotations from all passes persist on the same canvas. The model sees everything it has done so far.
+
+### Model prompt format
+
+Pass 1+ prompt structure:
+```
+You are analyzing an image with a visual sketchpad. The image has been
+annotated with analysis results from vision tools.
+
+Analysis so far:
+{findings_summary}
+
+Available tools (reply with TOOL(name, args) to use one):
+- crop_and_enhance(region): Zoom into a region ("center", "top-left", etc.)
+- detect_contours(): Find and highlight shape boundaries
+- segment_colors(): Isolate distinct color regions with area percentages
+- count_line_transitions(axis): Count lines along "horizontal" or "vertical"
+- measure_bar_fill(): Measure filled vs total width of bars
+- detect_boxes(): Find rectangular boxes and their positions
+
+Or reply with ANSWER followed by your response to:
+{original_prompt}
+```
+
+Parsing: regex `TOOL\((\w+)(?:,\s*(.+?))?\)` for tool calls, `ANSWER\s*(.+)` for final answer.
 
 ### Risks
 
