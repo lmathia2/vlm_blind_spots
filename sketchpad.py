@@ -1391,9 +1391,9 @@ def parse_sketchpad_response(
         return "tool", tool_name, kwargs
 
     # Check for ANSWER
-    answer_match = re.search(r"ANSWER\s*[:\(]?\s*(.+)", response, re.DOTALL)
+    answer_match = re.search(r"ANSWER\s*[:]?\s*(.+)", response, re.DOTALL)
     if answer_match:
-        answer_text = answer_match.group(1).strip().rstrip(")")
+        answer_text = answer_match.group(1).strip()
         return "answer", answer_text, None
 
     # If no explicit directive, treat the whole response as an answer
