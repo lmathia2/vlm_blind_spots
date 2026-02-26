@@ -21,3 +21,8 @@
 - **Example**: Before: model writes `hsv = np.array(Image.convert(img, 'HSV'))` (crashes). After: pre-built `segment_colors(image)` runs correctly and overlays percentage labels on the image for the model to read.
 - **Pattern**: nested_squares showed 97.9% accuracy on 48 samples (depth 2-5, thick lines) but dropped to 51.7% on 315 samples with harder params (depth 2-8, reduction 0.4-0.8, thin lines). The original result was misleadingly optimistic.
 - **Rule**: When generated images are much easier than reference benchmarks, expand sweep axes to include harder parameter values before drawing conclusions. Match difficulty to the reference dataset range.
+
+### 2026-02-26 Vision primitive quality determines strategy quality
+- **Pattern**: Visual Sketchpad achieved 85% on pie_chart (+60p) because `segment_colors` provides precise pixel-level area percentages. But it crashed hierarchy_depth to 6% (-55p) because `detect_boxes` found spurious rectangular regions (background areas, annotation artifacts from other primitives) and fed incorrect level counts to the model.
+- **Rule**: Validate each vision primitive against task-specific ground truth before routing. A noisy primitive is worse than no primitive — it actively misleads the model. Only route tasks to tool-augmented strategies when the tool output has validated accuracy.
+- **Example**: pie_chart segment_colors output: "orange=44.1%, teal=34.2%" (correct, directly usable). hierarchy_depth detect_boxes output: "found 4 rectangular regions: (0,63)→(383,705)" (wrong — these are background regions, not hierarchy nodes).
